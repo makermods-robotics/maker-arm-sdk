@@ -32,6 +32,7 @@ def test_load_good(tmp_path):
     (lambda c: c["joints"][1].update(motor_id=1), "唯一"),
     (lambda c: c["joints"][0].update(kd=9.0), "kd"),
     (lambda c: c.update(motor_can_timeout_ms=0), "CAN_TIMEOUT"),
+    (lambda c: c.update(limit_margin=-0.5), "limit_margin"),
 ])
 def test_validation(tmp_path, mutate, msg):
     import copy

@@ -54,6 +54,8 @@ class ArmConfig:
             raise ValueError(f"max_velocity 必须 >0，得到 {self.max_velocity}")
         if self.feedback_timeout <= 0:
             raise ValueError(f"feedback_timeout 必须 >0，得到 {self.feedback_timeout}")
+        if self.limit_margin < 0:
+            raise ValueError(f"limit_margin 必须 >=0，得到 {self.limit_margin}")
         ids = [j.motor_id for j in self.joints]
         if len(set(ids)) != len(ids):
             raise ValueError(f"motor_id 必须唯一: {ids}")

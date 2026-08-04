@@ -161,7 +161,7 @@ class Arm:
 
     def disable(self) -> None:
         self._running = False
-        if self._loop_thread:
+        if self._loop_thread and threading.current_thread() is not self._loop_thread:
             self._loop_thread.join(timeout=1.0)
             self._loop_thread = None
         for m in self.motors:

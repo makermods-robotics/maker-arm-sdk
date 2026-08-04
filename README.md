@@ -25,6 +25,9 @@ transport(socketcan/at/mock) → protocol(纯函数) → motor → arm(状态机
 3. 单电机台架 `python examples/03_sine_wave.py --joint N` 
 4. `python tools/set_zero.py` — 摆零位姿态标零
 5. 填实 `configs/maker_arm_6dof.yaml` 限位 → `python examples/02_enable_hold.py` 调 kp/kd
+
+> 注：首次使能若立刻报"模式异常 mode=0"，多为电机 enable 应答时序问题——检查使能帧后是否收到 mode=2 反馈再重试。
+
 6. `python tools/calib_star_map.py --star-port /dev/ttyUSBx` → `python examples/04_teleop_star.py --star-port /dev/ttyUSBx`
 
 ## 双后端对比

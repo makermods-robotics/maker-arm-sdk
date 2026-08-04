@@ -49,3 +49,36 @@ def test_enable_verifies_run_mode():
     arm, be = make_connected_arm()
     arm.enable(start_loop=False)   # auto_feedback 回 RUN_MODE=0 → 成功
     assert arm.state is ArmState.ENABLED
+
+
+def test_enable_hard_fails_on_wrong_run_mode():
+    import struct
+    from maker_arm import protocol as p
+    from maker_arm.errors import ConnectError
+    cfg, be = two_joint_cfg(), MockBackend()
+    base = auto_feedback({1: 0.0, 2: 0.0})
+
+    def responder(cid, data):
+        if (cid >> 24) & 0x1F == p.COMM_READ_PARAM:
+            idx = int.from_bytes(data[:2], "little")
+            mid = cid & 0xFF
+            if idx == p.ParamIndex.RUN_MODE:
+                reply_id = (p.COMM_READ_PARAM << 24) | (mid << 8) | p.HOST_CAN_ID
+                return [(reply_id, struct.pack("<H2x", idx) + struct.pack("<B3x", 1))]  # RUN_MODE=1 ≠ 0
+        return base(cid, data)
+    be.responder = responder
+    arm = Arm(cfg, be)
+    arm.connect(timeout=1.0)
+    with pytest.raises(ConnectError, match="运控模式未生效"):
+        arm.enable(start_loop=False)
+    assert arm.state is ArmState.CONNECTED
+
+
+def test_bad_mode_feedback_enters_fault():
+    arm, be = make_connected_arm()
+    arm.enable(start_loop=False)
+    be.responder = None
+    be.inject(*feedback_frame(1, mode=0))   # 电机掉出运控态
+    arm._tick(dt=0.005)
+    assert arm.state is ArmState.FAULT
+    assert "模式异常" in arm.fault_reason
