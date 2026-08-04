@@ -116,3 +116,90 @@ class Arm:
 
     def get_faults(self) -> list[int]:
         return [m.feedback.fault_bits if m.feedback else 0 for m in self.motors]
+
+    # ── 使能与控制循环 ──
+    def enable(self, start_loop: bool = True) -> None:
+        if self._state is not ArmState.CONNECTED:
+            raise StateError(f"enable() 需要 CONNECTED 态，当前 {self._state.name}")
+        for m in self.motors:
+            m.write_param(protocol.ParamIndex.RUN_MODE, 0, "u8")          # 0=运控(MIT)
+            m.write_param(protocol.ParamIndex.CAN_TIMEOUT,
+                          self.config.motor_can_timeout_ms, "u32")        # 电机侧看门狗
+        # 首帧保护：目标 = 当前实际位置（probe 刷新反馈，重试 10 次）
+        for _ in range(10):
+            self.refresh()
+            time.sleep(0.02)
+            if all(m.feedback_age < 0.5 for m in self.motors):
+                break
+        pos = self.get_joint_positions()
+        if any(math.isnan(x) for x in pos):
+            raise ConnectError("使能前读不到全部关节反馈，拒绝使能")
+        with self._target_lock:
+            self._user_targets = list(pos)
+        self._internal = list(pos)
+        for m in self.motors:
+            m.enable()
+        self._state = ArmState.ENABLED
+        self.fault_reason = None
+        if start_loop:
+            self._running = True
+            self._loop_thread = threading.Thread(target=self._control_loop,
+                                                 daemon=True, name="maker-arm-ctrl")
+            self._loop_thread.start()
+
+    def disable(self) -> None:
+        self._running = False
+        if self._loop_thread:
+            self._loop_thread.join(timeout=1.0)
+            self._loop_thread = None
+        for m in self.motors:
+            m.disable()
+        if self._state in (ArmState.ENABLED, ArmState.FAULT):
+            self._state = ArmState.CONNECTED
+
+    def estop(self) -> None:
+        """任何状态可调：立即失能全部电机。"""
+        self._running = False
+        for m in self.motors:
+            m.disable()
+        if self._state is ArmState.ENABLED:
+            self._state = ArmState.CONNECTED
+
+    def set_joint_targets(self, targets: list[float]) -> bool:
+        if self._state is not ArmState.ENABLED or len(targets) != self.config.n_joints:
+            log.warning("set_joint_targets 被拒绝: state=%s", self._state.name)
+            return False
+        with self._target_lock:
+            self._user_targets = list(targets)
+        return True
+
+    # ── 控制循环 ──
+    @staticmethod
+    def _busy_wait_us(us: float) -> None:
+        end = time.perf_counter() + us / 1e6
+        while time.perf_counter() < end:
+            pass
+
+    def _tick(self, dt: float) -> None:
+        with self._target_lock:
+            user = list(self._user_targets)
+        maxstep = self.config.max_velocity * dt
+        for i, j in enumerate(self.config.joints):
+            lo, hi = j.lo + self.config.limit_margin, j.hi - self.config.limit_margin
+            goal = min(hi, max(lo, user[i]))
+            step = min(maxstep, max(-maxstep, goal - self._internal[i]))
+            self._internal[i] += step
+            self.motors[i].send_mit(self._to_motor(i, self._internal[i]), 0.0, j.kp, j.kd, 0.0)
+            self._busy_wait_us(150)   # 拉开帧间隔防总线拥塞
+
+    def _control_loop(self) -> None:
+        dt = 1.0 / self.config.control_rate_hz
+        next_t = time.perf_counter()
+        while self._running:
+            self._tick(dt)
+            next_t += dt
+            remain = next_t - time.perf_counter()
+            if remain > 0:
+                time.sleep(remain)
+            else:
+                next_t = time.perf_counter()   # 落后了就重置，不追帧
