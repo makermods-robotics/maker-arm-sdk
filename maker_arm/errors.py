@@ -32,5 +32,5 @@ FAULT_NAMES = {
 def fault_text(bits: int) -> str:
     if not bits:
         return "无故障"
-    names = [FAULT_NAMES.get(i, f"bit{i}") for i in range(6) if bits & (1 << i)]
+    names = [FAULT_NAMES.get(i, f"bit{i}") for i in range(max(6, bits.bit_length())) if bits & (1 << i)]
     return "|".join(names)

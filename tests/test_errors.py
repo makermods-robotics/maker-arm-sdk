@@ -12,3 +12,4 @@ def test_fault_text():
     joined = errors.fault_text(0b000011)
     assert "欠压" in joined and "过流" in joined and "|" in joined
     assert "bit5" in errors.fault_text(0b100000) or "未标定" in errors.fault_text(0b100000)
+    assert errors.fault_text(1 << 6) == "bit6"   # 越界位也要大声报告，不许空串
