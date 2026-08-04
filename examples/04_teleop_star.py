@@ -4,11 +4,17 @@
 退出路径统一泄力：Ctrl-C / leader 读数异常 / SDK FAULT → finally disable。
 """
 
-import math
 import time
 
 from _args import arm_from_args, make_parser
 from maker_arm.mapping import JointMapper
+
+
+def _safe(fn):
+    try:
+        fn()
+    except Exception as e:
+        print(f"清理步骤失败（继续）: {e}")
 
 
 def main():
@@ -29,8 +35,8 @@ def main():
     bus = FashionStarServo(a.star_port, baudrate=1_000_000)
     mapper = JointMapper.from_json(a.map_path)
     arm = arm_from_args(a)
-    arm.connect()
     try:
+        arm.connect()
         data = bus.sync_monitor(star_ids)
         raw = {i: data[i].angle_deg for i in star_ids if data.get(i) and data[i].reliable}
         if len(raw) != len(star_ids):
@@ -43,10 +49,22 @@ def main():
         arm.enable()
         dt = 1.0 / a.rate
         print("遥操中，Ctrl-C 退出。")
+        miss = 0
         while arm.state.name == "ENABLED":
             t0 = time.perf_counter()
-            data = bus.sync_monitor(star_ids)
+            try:
+                data = bus.sync_monitor(star_ids)
+            except Exception as e:
+                print(f"leader 读数异常，退出跟随: {e}")
+                break
             raw = {i: data[i].angle_deg for i in star_ids if data.get(i) and data[i].reliable}
+            if not raw:
+                miss += 1
+                if miss >= 50:
+                    print("leader 读数丢失，退出跟随")
+                    break
+            else:
+                miss = 0
             arm.set_joint_targets(mapper.map(raw))
             remain = dt - (time.perf_counter() - t0)
             if remain > 0:
@@ -56,9 +74,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        arm.disable()
-        arm.disconnect()
-        bus.close()
+        _safe(arm.disable)
+        _safe(arm.disconnect)
+        _safe(bus.close)
         print("已泄力退出")
 
 

@@ -12,6 +12,13 @@ import time
 from maker_arm.arm import Arm
 
 
+def _safe(fn):
+    try:
+        fn()
+    except Exception as e:
+        print(f"清理步骤失败（继续）: {e}")
+
+
 def read_star(bus, ids):
     data = bus.sync_monitor(ids)
     return {i: data[i].angle_deg for i in ids if data.get(i) and data[i].reliable}
@@ -39,12 +46,16 @@ def main():
     bus = FashionStarServo(a.star_port, baudrate=1_000_000)
     kw = {"channel": a.channel} if a.backend == "socketcan" else {"port": a.port}
     arm = Arm.from_yaml(a.config, backend=a.backend, **kw)
-    arm.connect()
     try:
+        arm.connect()
         input("两臂摆到姿势 A（建议零位），回车采样 > ")
         star_a, maker_a = read_star(bus, star_ids), read_maker(arm)
         input("两臂摆到姿势 B（各关节尽量大位移），回车采样 > ")
         star_b, maker_b = read_star(bus, star_ids), read_maker(arm)
+
+        missing = [sid for sid in star_ids if sid not in star_a or sid not in star_b]
+        if missing:
+            raise SystemExit(f"servo {missing} 读数不可靠——重摆姿势后重跑")
 
         joints = []
         for i, sid in enumerate(star_ids):
@@ -60,8 +71,8 @@ def main():
             json.dump({"alpha": 0.3, "joints": joints}, f, indent=2, ensure_ascii=False)
         print(f"已写入 {a.out}")
     finally:
-        arm.disconnect()
-        bus.close()
+        _safe(arm.disconnect)
+        _safe(bus.close)
 
 
 if __name__ == "__main__":
