@@ -191,6 +191,7 @@ class Arm:
             self._internal[i] += step
             self.motors[i].send_mit(self._to_motor(i, self._internal[i]), 0.0, j.kp, j.kd, 0.0)
             self._busy_wait_us(150)   # 拉开帧间隔防总线拥塞
+        self._check_health()
 
     def _control_loop(self) -> None:
         dt = 1.0 / self.config.control_rate_hz
@@ -203,3 +204,29 @@ class Arm:
                 time.sleep(remain)
             else:
                 next_t = time.perf_counter()   # 落后了就重置，不追帧
+
+    def _check_health(self) -> None:
+        for m in self.motors:
+            if m.feedback_age > self.config.feedback_timeout:
+                self._enter_fault(f"电机 {m.motor_id} 反馈超时 {m.feedback_age:.2f}s——查总线/电源")
+                return
+            fb = m.feedback
+            if fb and fb.fault_bits:
+                self._enter_fault(f"电机 {m.motor_id}: {fault_text(fb.fault_bits)} (bits=0b{fb.fault_bits:06b})")
+                return
+
+    def _enter_fault(self, reason: str) -> None:
+        log.error("FAULT: %s", reason)
+        self.fault_reason = reason
+        self._running = False           # 控制线程随后自然退出
+        for m in self.motors:
+            m.disable()
+        self._state = ArmState.FAULT
+
+    def clear_faults(self) -> None:
+        if self._state is not ArmState.FAULT:
+            raise StateError(f"clear_faults() 需要 FAULT 态，当前 {self._state.name}")
+        for m in self.motors:
+            m.disable(clear_fault=True)
+        self.fault_reason = None
+        self._state = ArmState.CONNECTED
