@@ -39,3 +39,16 @@ def test_validation(tmp_path, mutate, msg):
     mutate(bad)
     with pytest.raises(ValueError, match=msg):
         ArmConfig.from_yaml(write(tmp_path, bad))
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda c: c.pop("joints"),                       # 缺 joints
+    lambda c: c.update(unknown_key=1),               # 未知顶层键
+    lambda c: c["joints"][0].update(typo_field=1),   # 关节字段拼错
+])
+def test_malformed_yaml_raises_valueerror(tmp_path, mutate):
+    import copy
+    bad = copy.deepcopy(GOOD)
+    mutate(bad)
+    with pytest.raises(ValueError):
+        ArmConfig.from_yaml(write(tmp_path, bad))

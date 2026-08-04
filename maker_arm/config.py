@@ -35,8 +35,13 @@ class ArmConfig:
     def from_yaml(cls, path: str) -> "ArmConfig":
         with open(path) as f:
             raw = yaml.safe_load(f)
-        joints = [JointConfig(**j) for j in raw.pop("joints")]
-        cfg = cls(joints=joints, **raw)
+        try:
+            joints = [JointConfig(**j) for j in raw.pop("joints")]
+            cfg = cls(joints=joints, **raw)
+        except KeyError as e:
+            raise ValueError(f"{path}: 缺少配置项 {e}") from e
+        except TypeError as e:
+            raise ValueError(f"{path}: 配置字段不认识或缺失——检查拼写（{e}）") from e
         cfg._validate()
         return cfg
 
