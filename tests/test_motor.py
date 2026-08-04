@@ -61,3 +61,16 @@ def test_read_param_timeout():
     m, be = make_motor(1)
     with pytest.raises(ParamTimeout):
         m.read_param(p.ParamIndex.VBUS, timeout=0.05)
+
+
+def test_read_param_ignores_mismatched_reply():
+    m, be = make_motor(1)
+
+    def stale_responder(cid, data):
+        if (cid >> 24) & 0x1F == p.COMM_READ_PARAM:
+            reply_id = (p.COMM_READ_PARAM << 24) | (1 << 8) | p.HOST_CAN_ID
+            # 回一个 index 不匹配的迟到回包：必须被忽略 → 超时
+            return [(reply_id, struct.pack("<H2x", 0x9999) + struct.pack("<f", 1.0))]
+    be.responder = stale_responder
+    with pytest.raises(ParamTimeout):
+        m.read_param(p.ParamIndex.VBUS, timeout=0.05)

@@ -22,6 +22,7 @@ class Motor:
         self._param_lock = threading.Lock()
         self._param_event = threading.Event()
         self._param_reply: Optional[ParamReply] = None
+        self._param_expect: Optional[int] = None
         self.last_fault_report: Optional[FaultReport] = None
 
     # ── 反馈缓存（由 Arm 的 RX 分发调用） ──
@@ -32,8 +33,9 @@ class Motor:
             self._feedback = msg
             self._fb_time = time.monotonic()
         elif isinstance(msg, ParamReply):
-            self._param_reply = msg
-            self._param_event.set()
+            if msg.index == self._param_expect:
+                self._param_reply = msg
+                self._param_event.set()
         elif isinstance(msg, FaultReport):
             self.last_fault_report = msg
 
@@ -55,7 +57,10 @@ class Motor:
         self._backend.send(*protocol.encode_disable(self.motor_id, clear_fault, self._host_id))
 
     def probe(self) -> None:
-        """发停止帧触发一帧反馈。只读探测惯例——仅在电机未使能时使用！"""
+        """发停止帧触发一帧反馈（RobStride 只读探测惯例）。
+
+        ⚠️ 对已使能的电机调用会把它停掉（泄力）——仅在电机未使能时使用。
+        """
         self.disable()
 
     def set_zero(self) -> None:
@@ -69,10 +74,14 @@ class Motor:
         with self._param_lock:
             self._param_event.clear()
             self._param_reply = None
-            self._backend.send(*protocol.encode_read_param(self.motor_id, index, self._host_id))
-            if not self._param_event.wait(timeout):
-                raise ParamTimeout(f"电机 {self.motor_id} 读参数 0x{index:04X} 超时 {timeout}s——查总线/电源/ID")
-            return self._param_reply.value(dtype)
+            self._param_expect = index
+            try:
+                self._backend.send(*protocol.encode_read_param(self.motor_id, index, self._host_id))
+                if not self._param_event.wait(timeout):
+                    raise ParamTimeout(f"电机 {self.motor_id} 读参数 0x{index:04X} 超时 {timeout}s——查总线/电源/ID")
+                return self._param_reply.value(dtype)
+            finally:
+                self._param_expect = None
 
     def write_param(self, index: int, value, dtype: str = "f") -> None:
         self._backend.send(*protocol.encode_write_param(self.motor_id, index, value, dtype, self._host_id))
