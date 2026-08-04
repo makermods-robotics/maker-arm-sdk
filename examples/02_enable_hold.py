@@ -12,9 +12,9 @@ def main():
     a = ap.parse_args()
     arm = arm_from_args(a)
     arm.connect()
-    input("即将使能（原地抱住，不应有任何运动）。确认后回车 > ")
-    arm.enable()
     try:
+        input("即将使能（原地抱住，不应有任何运动）。确认后回车 > ")
+        arm.enable()
         t_end = time.monotonic() + a.seconds
         while time.monotonic() < t_end and arm.state.name == "ENABLED":
             time.sleep(0.2)

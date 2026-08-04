@@ -16,9 +16,11 @@ def main():
     a = ap.parse_args()
     arm = arm_from_args(a)
     arm.connect()
-    input(f"即将使能并让 J{a.joint} 做 ±{a.amp} rad 正弦。确认后回车 > ")
-    arm.enable()
     try:
+        if not 1 <= a.joint <= arm.config.n_joints:
+            raise SystemExit(f"--joint 必须在 1~{arm.config.n_joints}，得到 {a.joint}")
+        input(f"即将使能并让 J{a.joint} 做 ±{a.amp} rad 正弦。确认后回车 > ")
+        arm.enable()
         start = arm.get_joint_positions()
         t0 = time.monotonic()
         while time.monotonic() - t0 < a.seconds and arm.state.name == "ENABLED":
