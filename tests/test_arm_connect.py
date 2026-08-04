@@ -1,4 +1,5 @@
 import math
+import struct
 
 import pytest
 
@@ -18,11 +19,24 @@ def two_joint_cfg():
 
 
 def auto_feedback(positions):
-    """Mock 应答器：任何指令帧都回一帧当前位置反馈（模拟真电机）。"""
+    """Mock 应答器：任何指令帧都回一帧当前位置反馈（模拟真电机）；
+    COMM_READ_PARAM 额外回一帧参数回读（RUN_MODE=0，CAN_TIMEOUT=200，其余 0.0）。"""
     def responder(cid, data):
         mid = cid & 0xFF
-        if mid in positions:
-            return [feedback_frame(mid, pos=positions[mid])]
+        if mid not in positions:
+            return None
+        comm = (cid >> 24) & 0x1F
+        if comm == p.COMM_READ_PARAM:
+            idx = struct.unpack("<H", data[:2])[0]
+            if idx == p.ParamIndex.RUN_MODE:
+                value = struct.pack("<B3x", 0)
+            elif idx == p.ParamIndex.CAN_TIMEOUT:
+                value = struct.pack("<I", 200)
+            else:
+                value = struct.pack("<f", 0.0)
+            reply_cid = (p.COMM_READ_PARAM << 24) | (mid << 8) | p.HOST_CAN_ID
+            return [(reply_cid, struct.pack("<H2x", idx) + value)]
+        return [feedback_frame(mid, pos=positions[mid])]
     return responder
 
 

@@ -41,4 +41,10 @@ class FakeMotorFleet:
         elif comm == p.COMM_READ_PARAM:
             idx = struct.unpack("<H", data[:2])[0]
             cid = (p.COMM_READ_PARAM << 24) | (mid << 8) | p.HOST_CAN_ID
-            self._be.send(cid, struct.pack("<H2x", idx) + struct.pack("<f", 0.0))
+            if idx == p.ParamIndex.RUN_MODE:
+                value = struct.pack("<B3x", 0)
+            elif idx == p.ParamIndex.CAN_TIMEOUT:
+                value = struct.pack("<I", 200)
+            else:
+                value = struct.pack("<f", 0.0)
+            self._be.send(cid, struct.pack("<H2x", idx) + value)

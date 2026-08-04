@@ -48,6 +48,12 @@ class ArmConfig:
     def _validate(self) -> None:
         if self.motor_can_timeout_ms <= 0:
             raise ValueError("motor_can_timeout_ms 必须 >0：电机侧 CAN_TIMEOUT 看门狗禁止关闭")
+        if self.control_rate_hz <= 0:
+            raise ValueError(f"control_rate_hz 必须 >0，得到 {self.control_rate_hz}")
+        if self.max_velocity <= 0:
+            raise ValueError(f"max_velocity 必须 >0，得到 {self.max_velocity}")
+        if self.feedback_timeout <= 0:
+            raise ValueError(f"feedback_timeout 必须 >0，得到 {self.feedback_timeout}")
         ids = [j.motor_id for j in self.joints]
         if len(set(ids)) != len(ids):
             raise ValueError(f"motor_id 必须唯一: {ids}")
@@ -56,6 +62,8 @@ class ArmConfig:
                 raise ValueError(f"电机 {j.motor_id}: direction 只能是 ±1，得到 {j.direction}")
             if not j.lo < j.hi:
                 raise ValueError(f"电机 {j.motor_id}: 限位必须 lo < hi，得到 [{j.lo}, {j.hi}]")
+            if not j.lo + 2 * self.limit_margin < j.hi:
+                raise ValueError(f"电机 {j.motor_id}: 限位区间过窄（lo+2*margin >= hi）")
             if not (protocol.KD_MIN <= j.kd <= protocol.KD_MAX):
                 raise ValueError(f"电机 {j.motor_id}: kd 超协议范围 [0,5]，得到 {j.kd}")
             if not (protocol.KP_MIN <= j.kp <= protocol.KP_MAX):

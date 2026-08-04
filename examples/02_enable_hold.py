@@ -6,6 +6,13 @@ import time
 from _args import arm_from_args, make_parser
 
 
+def _safe(fn):
+    try:
+        fn()
+    except Exception as e:
+        print(f"清理步骤失败（继续）: {e}")
+
+
 def main():
     ap = make_parser(__doc__)
     ap.add_argument("--seconds", type=float, default=30.0)
@@ -24,8 +31,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        arm.disable()
-        arm.disconnect()
+        _safe(arm.disable)
+        _safe(arm.disconnect)
         print("已泄力退出")
 
 

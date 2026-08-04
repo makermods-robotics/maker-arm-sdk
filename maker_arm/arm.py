@@ -9,7 +9,7 @@ from typing import Optional
 
 from . import protocol
 from .config import ArmConfig
-from .errors import ConnectError, StateError, fault_text
+from .errors import ConnectError, ParamTimeout, StateError, fault_text
 from .motor import Motor
 from .transport.base import CanBackend, create_backend
 
@@ -125,6 +125,18 @@ class Arm:
             m.write_param(protocol.ParamIndex.RUN_MODE, 0, "u8")          # 0=运控(MIT)
             m.write_param(protocol.ParamIndex.CAN_TIMEOUT,
                           self.config.motor_can_timeout_ms, "u32")        # 电机侧看门狗
+        # 回读校验：确认电机确实接受了 RUN_MODE / CAN_TIMEOUT 设置
+        for m in self.motors:
+            try:
+                run_mode = m.read_param(protocol.ParamIndex.RUN_MODE, dtype="u8")
+                if run_mode != 0:
+                    raise ConnectError(f"电机 {m.motor_id} RUN_MODE 回读 {run_mode}≠0（运控模式未生效）")
+                timeout_ms = m.read_param(protocol.ParamIndex.CAN_TIMEOUT, dtype="u32")
+                if timeout_ms != self.config.motor_can_timeout_ms:
+                    log.warning("电机 %d CAN_TIMEOUT 回读 %s ≠ 配置 %d（真机核对单位）",
+                                m.motor_id, timeout_ms, self.config.motor_can_timeout_ms)
+            except ParamTimeout as e:
+                raise ConnectError(f"使能前参数回读失败: {e}") from e
         # 首帧保护：目标 = 当前实际位置（probe 刷新反馈，重试 10 次）
         for _ in range(10):
             self.refresh()
@@ -153,21 +165,33 @@ class Arm:
             self._loop_thread.join(timeout=1.0)
             self._loop_thread = None
         for m in self.motors:
-            m.disable()
+            try:
+                m.disable()
+            except Exception as e:
+                log.error("失能电机 %d 失败: %s", m.motor_id, e)
         if self._state in (ArmState.ENABLED, ArmState.FAULT):
             self._state = ArmState.CONNECTED
 
     def estop(self) -> None:
         """任何状态可调：立即失能全部电机。"""
         self._running = False
+        if self._loop_thread and threading.current_thread() is not self._loop_thread:
+            self._loop_thread.join(timeout=1.0)
+            self._loop_thread = None
         for m in self.motors:
-            m.disable()
+            try:
+                m.disable()
+            except Exception as e:
+                log.error("急停失能电机 %d 失败: %s", m.motor_id, e)
         if self._state is ArmState.ENABLED:
             self._state = ArmState.CONNECTED
 
     def set_joint_targets(self, targets: list[float]) -> bool:
         if self._state is not ArmState.ENABLED or len(targets) != self.config.n_joints:
             log.warning("set_joint_targets 被拒绝: state=%s", self._state.name)
+            return False
+        if not all(math.isfinite(t) for t in targets):
+            log.warning("set_joint_targets 被拒绝: 目标包含非有限值 %s", targets)
             return False
         with self._target_lock:
             self._user_targets = list(targets)
@@ -196,8 +220,12 @@ class Arm:
     def _control_loop(self) -> None:
         dt = 1.0 / self.config.control_rate_hz
         next_t = time.perf_counter()
-        while self._running:
-            self._tick(dt)
+        while self._running and threading.current_thread() is self._loop_thread:
+            try:
+                self._tick(dt)
+            except Exception as e:
+                self._enter_fault(f"控制循环异常: {e}")
+                break
             next_t += dt
             remain = next_t - time.perf_counter()
             if remain > 0:
@@ -214,13 +242,19 @@ class Arm:
             if fb and fb.fault_bits:
                 self._enter_fault(f"电机 {m.motor_id}: {fault_text(fb.fault_bits)} (bits=0b{fb.fault_bits:06b})")
                 return
+            if fb and fb.mode != 2:
+                self._enter_fault(f"电机 {m.motor_id} 模式异常 mode={fb.mode}（未在运控状态）")
+                return
 
     def _enter_fault(self, reason: str) -> None:
         log.error("FAULT: %s", reason)
         self.fault_reason = reason
         self._running = False           # 控制线程随后自然退出
         for m in self.motors:
-            m.disable()
+            try:
+                m.disable()
+            except Exception as e:
+                log.error("失能电机 %d 失败: %s", m.motor_id, e)
         self._state = ArmState.FAULT
 
     def clear_faults(self) -> None:
