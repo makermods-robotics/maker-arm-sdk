@@ -1,3 +1,45 @@
 # maker-arm
 
-6×RobStride RS00 机械臂 Python SDK（开发中）。设计文档见 makermods 仓库 `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md`。
+6×RobStride RS00 自研机械臂纯 Python SDK。协议同源 EDULITE A3（RobStride 私有 CAN @1Mbps），全 RS00 统一映射。设计文档：makermods 仓库 `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md`。
+
+## 安装
+
+    conda create -y -n maker-arm python=3.11 && conda run -n maker-arm pip install -e ".[dev]"
+
+## 分层
+
+transport(socketcan/at/mock) → protocol(纯函数) → motor → arm(状态机+200Hz 控制循环) → tools/examples
+
+## 快速开始（10 行遥操内核）
+
+    from maker_arm import Arm
+    arm = Arm.from_yaml("configs/maker_arm_6dof.yaml", backend="socketcan", channel="can0")
+    arm.connect(); arm.enable()
+    arm.set_joint_targets([0.0]*6)   # rad；200Hz 循环限速平滑跟随
+    arm.disable(); arm.disconnect()
+
+## 真机 bring-up 序列（按序执行，勿跳步）
+
+1. `python tools/scan_bus.py` — 6 个 ID 都在线？
+2. `python tools/monitor.py` — 手推关节，方向/数值对？（据此填 configs 的 direction）
+3. 单电机台架 `python examples/03_sine_wave.py --joint N` 
+4. `python tools/set_zero.py` — 摆零位姿态标零
+5. 填实 `configs/maker_arm_6dof.yaml` 限位 → `python examples/02_enable_hold.py` 调 kp/kd
+6. `python tools/calib_star_map.py --star-port /dev/ttyUSBx` → `python examples/04_teleop_star.py --star-port /dev/ttyUSBx`
+
+## 双后端对比
+
+    python tools/bench_backend.py --backend socketcan --channel can0
+    python tools/bench_backend.py --backend at --port /dev/ttyUSB0
+
+## 安全设计
+
+- 使能瞬间目标=当前位置（首帧保护）；目标只能以 max_velocity 限速趋近（防飞车）
+- 软限位内缩 limit_margin；主机侧反馈超时→FAULT 泄力；电机侧 CAN_TIMEOUT=200ms（进程崩溃电机自动泄力）
+- 故障码翻译成中文大声报告，绝不静默丢弃
+
+## 离线测试
+
+    conda run -n maker-arm pytest -q                          # 协议/传输/电机/机械臂单测
+    sudo modprobe vcan && sudo ip link add dev vcan0 type vcan; sudo ip link set up vcan0
+    conda run -n maker-arm pytest tests/test_vcan_integration.py -q   # 无硬件全链路
