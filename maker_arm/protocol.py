@@ -51,3 +51,49 @@ def u16_to_float(v: int, lo: float, hi: float) -> float:
 
 def make_can_id(comm: int, data2: int, target: int) -> int:
     return ((comm & 0x1F) << 24) | ((data2 & 0xFFFF) << 8) | (target & 0xFF)
+
+
+def encode_enable(motor_id: int, host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
+    return make_can_id(COMM_ENABLE, host_id, motor_id), bytes(8)
+
+
+def encode_disable(motor_id: int, clear_fault: bool = False,
+                   host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
+    data = bytearray(8)
+    if clear_fault:
+        data[0] = 1
+    return make_can_id(COMM_DISABLE, host_id, motor_id), bytes(data)
+
+
+def encode_mit(motor_id: int, pos: float, vel: float,
+               kp: float, kd: float, tau: float) -> tuple[int, bytes]:
+    data = struct.pack(">HHHH",
+                       float_to_u16(pos, P_MIN, P_MAX),
+                       float_to_u16(vel, V_MIN, V_MAX),
+                       float_to_u16(kp, KP_MIN, KP_MAX),
+                       float_to_u16(kd, KD_MIN, KD_MAX))
+    tau_u16 = float_to_u16(tau, T_MIN, T_MAX)
+    return make_can_id(COMM_MIT, tau_u16, motor_id), data
+
+
+def encode_set_zero(motor_id: int, host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
+    data = bytearray(8)
+    data[0] = 1
+    return make_can_id(COMM_SET_ZERO, host_id, motor_id), bytes(data)
+
+
+def encode_read_param(motor_id: int, index: int,
+                      host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
+    return make_can_id(COMM_READ_PARAM, host_id, motor_id), struct.pack("<H6x", index)
+
+
+def encode_write_param(motor_id: int, index: int, value, dtype: str = "f",
+                       host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
+    fmt = {"f": "<f", "u8": "<B3x", "u16": "<H2x", "u32": "<I"}[dtype]
+    payload = struct.pack(fmt, value if dtype == "f" else int(value))
+    return (make_can_id(COMM_WRITE_PARAM, host_id, motor_id),
+            struct.pack("<H2x", index) + payload)
+
+
+def encode_save_params(motor_id: int, host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
+    return make_can_id(COMM_SAVE, host_id, motor_id), bytes(8)
