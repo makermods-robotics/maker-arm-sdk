@@ -1,5 +1,6 @@
 """原生 AF_CAN socket 后端（不依赖 python-can）。Linux 内核 CAN 帧固定 16 字节。"""
 
+import logging
 import socket
 import struct
 import threading
@@ -10,6 +11,7 @@ from .base import CanBackend
 CAN_EFF_FLAG = 0x80000000
 CAN_EFF_MASK = 0x1FFFFFFF
 _FRAME = struct.Struct("=IB3x8s")  # can_id | dlc | pad | data
+log = logging.getLogger("maker_arm.transport")
 
 
 class SocketCanBackend(CanBackend):
@@ -55,7 +57,10 @@ class SocketCanBackend(CanBackend):
                 continue
             except OSError:
                 break
-            cid, dlc, payload = _FRAME.unpack(buf)
-            cb = self._cb
-            if cb and (cid & CAN_EFF_FLAG):
-                cb(cid & CAN_EFF_MASK, payload[:dlc])
+            try:
+                cid, dlc, payload = _FRAME.unpack(buf)
+                cb = self._cb
+                if cb and (cid & CAN_EFF_FLAG):
+                    cb(cid & CAN_EFF_MASK, payload[:dlc])
+            except Exception:
+                log.exception("socketcan RX 帧处理异常（继续收帧）")
