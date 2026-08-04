@@ -1,0 +1,11 @@
+{
+  "alpha": 0.3,
+  "joints": [
+    {"servo": 0, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
+    {"servo": 1, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
+    {"servo": 2, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
+    {"servo": 3, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
+    {"servo": 4, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
+    {"servo": 5, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0}
+  ]
+}
