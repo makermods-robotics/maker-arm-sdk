@@ -58,3 +58,39 @@ def test_encode_params_little_endian():
     assert data[:2] == bytes.fromhex("1770") and data[4:8] == struct.pack("<f", 2.0)
     cid, data = p.encode_save_params(1)
     assert cid == 0x1600FD01
+
+
+def test_parse_feedback_golden():
+    # comm=2, mode=2(Motor), fault=0, motor=1, target=host
+    cid = (2 << 24) | (2 << 22) | (0 << 16) | (1 << 8) | 0xFD
+    assert cid == 0x028001FD
+    data = bytes.fromhex("800080008000" + "0159")  # pos/vel/tau≈0, temp=34.5°C
+    fb = p.parse_frame(cid, data)
+    assert isinstance(fb, p.MotorFeedback)
+    assert fb.motor_id == 1 and fb.mode == 2 and fb.fault_bits == 0
+    assert fb.position == pytest.approx(0.0, abs=1e-3)
+    assert fb.velocity == pytest.approx(0.0, abs=1e-3)
+    assert fb.torque == pytest.approx(0.0, abs=1e-3)
+    assert fb.temperature == pytest.approx(34.5)
+
+
+def test_parse_feedback_fault_bits():
+    cid = (2 << 24) | (2 << 22) | (0x21 << 16) | (3 << 8) | 0xFD
+    fb = p.parse_frame(cid, bytes(8))
+    assert fb.motor_id == 3 and fb.fault_bits == 0x21
+
+
+def test_parse_param_reply():
+    # 电机 2 回读 VBUS=24.5：comm=17，ID Bit8~15=电机ID，目标=主机
+    cid = (17 << 24) | (2 << 8) | 0xFD
+    data = struct.pack("<H2x", p.ParamIndex.VBUS) + struct.pack("<f", 24.5)
+    r = p.parse_frame(cid, data)
+    assert isinstance(r, p.ParamReply)
+    assert r.motor_id == 2 and r.index == p.ParamIndex.VBUS
+    assert r.value("f") == pytest.approx(24.5)
+    r2 = p.parse_frame(cid, struct.pack("<H2x", 0x7028) + struct.pack("<I", 200))
+    assert r2.value("u32") == 200
+
+
+def test_parse_unknown_returns_none():
+    assert p.parse_frame((22 << 24) | 0xFD, bytes(8)) is None

@@ -97,3 +97,52 @@ def encode_write_param(motor_id: int, index: int, value, dtype: str = "f",
 
 def encode_save_params(motor_id: int, host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
     return make_can_id(COMM_SAVE, host_id, motor_id), bytes(8)
+
+
+@dataclass
+class MotorFeedback:
+    motor_id: int
+    position: float      # rad，电机坐标（方向/偏移换算在机械臂层）
+    velocity: float      # rad/s
+    torque: float        # Nm
+    temperature: float   # °C
+    mode: int            # 0=Reset 1=Cali 2=Motor
+    fault_bits: int      # 6 位故障码，非 0 即故障
+
+
+@dataclass
+class ParamReply:
+    motor_id: int
+    index: int
+    raw: bytes           # data[4:8]，按参数实际类型再解
+
+    def value(self, dtype: str = "f"):
+        fmt = {"f": "<f", "u8": "<B3x", "u16": "<H2x", "u32": "<I"}[dtype]
+        return struct.unpack(fmt, self.raw)[0]
+
+
+@dataclass
+class FaultReport:
+    motor_id: int
+    raw: bytes
+
+
+def parse_frame(can_id: int, data: bytes):
+    comm = (can_id >> 24) & 0x1F
+    if comm == COMM_FEEDBACK:
+        pos_u, vel_u, tau_u, temp_u = struct.unpack(">HHHH", data[:8])
+        return MotorFeedback(
+            motor_id=(can_id >> 8) & 0xFF,
+            position=u16_to_float(pos_u, P_MIN, P_MAX),
+            velocity=u16_to_float(vel_u, V_MIN, V_MAX),
+            torque=u16_to_float(tau_u, T_MIN, T_MAX),
+            temperature=temp_u / 10.0,
+            mode=(can_id >> 22) & 0x03,
+            fault_bits=(can_id >> 16) & 0x3F,
+        )
+    if comm == COMM_READ_PARAM:
+        index = struct.unpack("<H", data[:2])[0]
+        return ParamReply(motor_id=(can_id >> 8) & 0xFF, index=index, raw=bytes(data[4:8]))
+    if comm == COMM_FAULT:
+        return FaultReport(motor_id=(can_id >> 8) & 0xFF, raw=bytes(data))
+    return None
