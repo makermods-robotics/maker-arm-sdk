@@ -24,7 +24,7 @@ transport(socketcan/at/mock) → protocol(纯函数) → motor → arm(状态机
 2. `python tools/monitor.py` — 手推关节，方向/数值对？（据此填 configs 的 direction）
 3. 单电机台架 `python examples/03_sine_wave.py --joint N` 
 4. `python tools/set_zero.py` — 摆零位姿态标零
-5. 填实 `configs/maker_arm_6dof.yaml` 限位 → `python examples/02_enable_hold.py` 调 kp/kd
+5. 量限位：标零后再跑 `python tools/monitor.py`，逐关节手推到两端极限，屏幕实时显示 min/max；按 **Enter** 自动把回退后的 lo/hi 写入 `configs/maker_arm_6dof.yaml`（保留注释，`.bak` 备份，写后校验失败自动回滚），原始记录存 `configs/limits_capture.json`；没推过的关节会被跳过并警告。Ctrl-C 退出不写。之后 `python examples/02_enable_hold.py` 调 kp/kd
 
 > 注：首次使能若立刻报"模式异常 mode=0"，多为电机 enable 应答时序问题——检查使能帧后是否收到 mode=2 反馈再重试。
 
