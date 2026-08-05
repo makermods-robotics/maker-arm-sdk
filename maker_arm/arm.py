@@ -27,7 +27,8 @@ class Arm:
     def __init__(self, config: ArmConfig, backend: CanBackend):
         self.config = config
         self._backend = backend
-        self.motors = [Motor(j.motor_id, backend) for j in config.joints]
+        self.motors = [Motor(j.motor_id, backend,
+                             params=protocol.MOTOR_PARAMS[j.model]) for j in config.joints]
         self._by_id = {m.motor_id: m for m in self.motors}
         self._state = ArmState.DISCONNECTED
         self._target_lock = threading.Lock()
@@ -47,12 +48,14 @@ class Arm:
 
     # ── RX 分发（传输层回调：快进快出） ──
     def _on_frame(self, can_id: int, data: bytes) -> None:
-        msg = protocol.parse_frame(can_id, data)
+        # 电机发来的帧（feedback/param/fault）motor_id 都在 Bit8~15——先查型号再解码
+        m = self._by_id.get((can_id >> 8) & 0xFF)
+        msg = protocol.parse_frame(can_id, data, m.params if m else None)
         if msg is None:
             return
-        m = self._by_id.get(msg.motor_id)
-        if m:
-            m.handle_frame(msg)
+        m2 = self._by_id.get(msg.motor_id)
+        if m2:
+            m2.handle_frame(msg)
 
     # ── 连接管理 ──
     def connect(self, timeout: float = 2.0) -> None:

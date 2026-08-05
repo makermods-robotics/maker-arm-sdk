@@ -1,0 +1,17 @@
+# maker-arm02：J2/J3 为 RS02（映射 ±17Nm/±44rad/s），其余 RS00。
+# ⚠️ RS02 固件 ≤0.2.2.11 的位置映射为 ±12.5 rad（SDK 按新固件 ±12.57）——
+#    bring-up 第一步先用 READ_VERSION 查固件版本，过旧先升级。
+# direction/offset/lo/hi 为占位：按 README bring-up 序列
+#（monitor 手推核对方向 → set_zero → monitor 按 Enter 采限位）填实。
+control_rate_hz: 200
+max_velocity: 1.5
+limit_margin: 0.05
+feedback_timeout: 0.2
+motor_can_timeout_ms: 200
+joints:
+  - {motor_id: 1, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 60, kd: 2.0}
+  - {motor_id: 2, model: RS02, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 80, kd: 3.0}
+  - {motor_id: 3, model: RS02, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 80, kd: 3.0}
+  - {motor_id: 4, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}
+  - {motor_id: 5, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}
+  - {motor_id: 6, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}

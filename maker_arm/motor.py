@@ -13,10 +13,12 @@ from .transport.base import CanBackend
 
 class Motor:
     def __init__(self, motor_id: int, backend: CanBackend,
-                 host_id: int = protocol.HOST_CAN_ID):
+                 host_id: int = protocol.HOST_CAN_ID,
+                 params: protocol.MotorParams = None):
         self.motor_id = motor_id
         self._backend = backend
         self._host_id = host_id
+        self.params = params or protocol.RS00   # 型号映射表（T/V 范围按型号不同）
         self._feedback: Optional[MotorFeedback] = None
         self._fb_time: Optional[float] = None
         self._param_lock = threading.Lock()
@@ -67,7 +69,7 @@ class Motor:
         self._backend.send(*protocol.encode_set_zero(self.motor_id, self._host_id))
 
     def send_mit(self, pos: float, vel: float, kp: float, kd: float, tau: float) -> None:
-        self._backend.send(*protocol.encode_mit(self.motor_id, pos, vel, kp, kd, tau))
+        self._backend.send(*protocol.encode_mit(self.motor_id, pos, vel, kp, kd, tau, self.params))
 
     # ── 同步参数读写 ──
     def read_param(self, index: int, dtype: str = "f", timeout: float = 0.1):

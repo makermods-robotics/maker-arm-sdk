@@ -15,6 +15,25 @@ KP_MIN, KP_MAX = 0.0, 500.0
 KD_MIN, KD_MAX = 0.0, 5.0         # 协议硬上限
 HOST_CAN_ID = 0xFD
 
+
+@dataclass(frozen=True)
+class MotorParams:
+    """按型号的 uint16 映射范围。帧格式各型号相同，仅范围不同——选错表的症状是
+    力矩/速度读数按错误比例缩放（协议文档明确警告过的坑）。"""
+    t_min: float
+    t_max: float
+    v_min: float
+    v_max: float
+    p_min: float = P_MIN
+    p_max: float = P_MAX
+
+
+RS00 = MotorParams(t_min=T_MIN, t_max=T_MAX, v_min=V_MIN, v_max=V_MAX)
+# RS02：±17Nm/±44rad/s（额定 6Nm，减速比 7.75:1）。
+# ⚠️ 固件 ≤0.2.2.11 位置映射为 ±12.5（此处按新固件 ±12.57），bring-up 时查固件版本。
+RS02 = MotorParams(t_min=-17.0, t_max=17.0, v_min=-44.0, v_max=44.0)
+MOTOR_PARAMS = {"RS00": RS00, "RS02": RS02}
+
 # ── 通信类型（29 位 ID 的 Bit28~24） ──
 COMM_GET_ID = 0
 COMM_MIT = 1
@@ -65,14 +84,15 @@ def encode_disable(motor_id: int, clear_fault: bool = False,
     return make_can_id(COMM_DISABLE, host_id, motor_id), bytes(data)
 
 
-def encode_mit(motor_id: int, pos: float, vel: float,
-               kp: float, kd: float, tau: float) -> tuple[int, bytes]:
+def encode_mit(motor_id: int, pos: float, vel: float, kp: float, kd: float,
+               tau: float, params: MotorParams = None) -> tuple[int, bytes]:
+    pr = params or RS00
     data = struct.pack(">HHHH",
-                       float_to_u16(pos, P_MIN, P_MAX),
-                       float_to_u16(vel, V_MIN, V_MAX),
+                       float_to_u16(pos, pr.p_min, pr.p_max),
+                       float_to_u16(vel, pr.v_min, pr.v_max),
                        float_to_u16(kp, KP_MIN, KP_MAX),
                        float_to_u16(kd, KD_MIN, KD_MAX))
-    tau_u16 = float_to_u16(tau, T_MIN, T_MAX)
+    tau_u16 = float_to_u16(tau, pr.t_min, pr.t_max)
     return make_can_id(COMM_MIT, tau_u16, motor_id), data
 
 
@@ -127,15 +147,16 @@ class FaultReport:
     raw: bytes
 
 
-def parse_frame(can_id: int, data: bytes):
+def parse_frame(can_id: int, data: bytes, params: MotorParams = None):
+    pr = params or RS00
     comm = (can_id >> 24) & 0x1F
     if comm == COMM_FEEDBACK:
         pos_u, vel_u, tau_u, temp_u = struct.unpack(">HHHH", data[:8])
         return MotorFeedback(
             motor_id=(can_id >> 8) & 0xFF,
-            position=u16_to_float(pos_u, P_MIN, P_MAX),
-            velocity=u16_to_float(vel_u, V_MIN, V_MAX),
-            torque=u16_to_float(tau_u, T_MIN, T_MAX),
+            position=u16_to_float(pos_u, pr.p_min, pr.p_max),
+            velocity=u16_to_float(vel_u, pr.v_min, pr.v_max),
+            torque=u16_to_float(tau_u, pr.t_min, pr.t_max),
             temperature=temp_u / 10.0,
             mode=(can_id >> 22) & 0x03,
             fault_bits=(can_id >> 16) & 0x3F,

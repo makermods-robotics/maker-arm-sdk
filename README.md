@@ -1,6 +1,6 @@
 # maker-arm
 
-6×RobStride RS00 自研机械臂纯 Python SDK。协议同源 EDULITE A3（RobStride 私有 CAN @1Mbps），全 RS00 统一映射。设计文档：makermods 仓库 `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md`。
+RobStride 电机自研机械臂纯 Python SDK。协议同源 EDULITE A3（RobStride 私有 CAN @1Mbps）。支持按关节混装型号：YAML 里每关节 `model:` 字段（RS00/RS02，默认 RS00）决定 T/V 映射表。一号臂全 RS00 用 `configs/maker_arm_6dof.yaml`；二号臂 maker-arm02（J2/J3=RS02）用 `--config configs/maker_arm02_6dof.yaml`。设计文档：makermods 仓库 `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md`。
 
 ## 安装
 

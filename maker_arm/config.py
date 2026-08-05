@@ -16,6 +16,7 @@ class JointConfig:
     hi: float
     kp: float
     kd: float
+    model: str = "RS00"   # 电机型号 → protocol.MOTOR_PARAMS 映射表
 
 
 @dataclass
@@ -60,6 +61,8 @@ class ArmConfig:
         if len(set(ids)) != len(ids):
             raise ValueError(f"motor_id 必须唯一: {ids}")
         for j in self.joints:
+            if j.model not in protocol.MOTOR_PARAMS:
+                raise ValueError(f"电机 {j.motor_id}: 未知型号 {j.model!r}（支持 {sorted(protocol.MOTOR_PARAMS)}）")
             if j.direction not in (1, -1):
                 raise ValueError(f"电机 {j.motor_id}: direction 只能是 ±1，得到 {j.direction}")
             if not j.lo < j.hi:
