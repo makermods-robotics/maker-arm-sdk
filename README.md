@@ -30,6 +30,14 @@ transport(socketcan/at/mock) → protocol(纯函数) → motor → arm(状态机
 
 6. `python tools/calib_star_map.py --star-port /dev/ttyUSBx` → `python examples/04_teleop_star.py --star-port /dev/ttyUSBx`
 
+## SLCAN 棒（与 metal 臂同款 CANable 类适配器）
+
+插上后一条命令挂成 can0，SDK 走默认 socketcan 后端，零代码：
+
+    sudo bash scripts/setup_slcan.sh
+
+（默认 /dev/ttyACM0 → can0 @1Mbps；拔插后重跑即可。串口名/接口名可作参数传入。）
+
 ## 双后端对比
 
     python tools/bench_backend.py --backend socketcan --channel can0
