@@ -1,6 +1,6 @@
 # maker-arm
 
-RobStride 电机自研机械臂纯 Python SDK。协议同源 EDULITE A3（RobStride 私有 CAN @1Mbps）。支持按关节混装型号：YAML 里每关节 `model:` 字段（RS00/RS02，默认 RS00）决定 T/V 映射表。一号臂全 RS00 用 `configs/maker_arm_6dof.yaml`；二号臂 maker-arm02（J2/J3=RS02）用 `--config configs/maker_arm02_6dof.yaml`。设计文档：makermods 仓库 `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md`。
+RobStride 电机自研机械臂（**6 关节 + 1 夹爪**，夹爪为 RS00 @ID7，作普通 MIT 第 7 关节——夹持力 = kp×位置误差，kp 小即柔性限力）纯 Python SDK。协议同源 EDULITE A3（RobStride 私有 CAN @1Mbps）。支持按关节混装型号：YAML 里每关节 `model:` 字段（RS00/RS02，默认 RS00）决定 T/V 映射表。一号臂全 RS00 用 `configs/maker_arm01.yaml`；二号臂 maker-arm02（J2/J3=RS02）用 `--config configs/maker_arm02.yaml`。设计文档：makermods 仓库 `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md`。
 
 ## 安装
 
@@ -20,7 +20,7 @@ transport(socketcan/at/mock) → protocol(纯函数) → motor → arm(状态机
 
 ## 真机 bring-up 序列（按序执行，勿跳步）
 
-1. `python tools/scan_bus.py` — 6 个 ID 都在线？
+1. `python tools/scan_bus.py` — 7 个 ID（6 关节+夹爪）都在线？
 2. `python tools/monitor.py` — 手推关节，方向/数值对？（据此填 configs 的 direction）
 3. 单电机台架 `python examples/03_sine_wave.py --joint N` 
 4. `python tools/set_zero.py` — 摆零位姿态标零

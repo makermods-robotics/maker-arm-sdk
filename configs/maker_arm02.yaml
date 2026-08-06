@@ -15,3 +15,4 @@ joints:
   - {motor_id: 4, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}
   - {motor_id: 5, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}
   - {motor_id: 6, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}
+  - {motor_id: 7, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 20, kd: 0.5}  # 夹爪：MIT 模式，夹持力=kp×位置误差，kp 小=柔性限力

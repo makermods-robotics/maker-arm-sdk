@@ -20,7 +20,7 @@ def _safe(fn):
 def main():
     ap = make_parser(__doc__)
     ap.add_argument("--star-port", required=True)
-    ap.add_argument("--star-ids", default="0,1,2,3,4,5")
+    ap.add_argument("--star-ids", default="0,1,2,3,4,5,6")
     ap.add_argument("--map", dest="map_path", default="configs/star_to_maker.json")
     ap.add_argument("--rate", type=float, default=100.0)
     ap.add_argument("--sync-threshold", type=float, default=0.8, help="启动姿势差确认阈值 rad")

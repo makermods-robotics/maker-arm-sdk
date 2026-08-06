@@ -32,12 +32,12 @@ def read_maker(arm):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", default="configs/maker_arm_6dof.yaml")
+    ap.add_argument("--config", default="configs/maker_arm01.yaml")
     ap.add_argument("--backend", choices=["socketcan", "at"], default="socketcan")
     ap.add_argument("--channel", default="can0")
     ap.add_argument("--port", default="/dev/ttyUSB0")
     ap.add_argument("--star-port", required=True)
-    ap.add_argument("--star-ids", default="0,1,2,3,4,5")
+    ap.add_argument("--star-ids", default="0,1,2,3,4,5,6")
     ap.add_argument("--out", default="configs/star_to_maker.json")
     a = ap.parse_args()
     star_ids = [int(x) for x in a.star_ids.split(",")]
