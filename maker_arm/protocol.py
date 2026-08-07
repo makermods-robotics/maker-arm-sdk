@@ -59,7 +59,7 @@ class ParamIndex:
     LIMIT_SPD = 0x7017     # f32
     MECH_POS = 0x7019      # f32
     VBUS = 0x701C          # f32
-    CAN_TIMEOUT = 0x7028   # u32，毫秒（真机 bring-up 时用 read_param 验证单位）
+    CAN_TIMEOUT = 0x7028   # u32，单位 50µs/计数（20000=1s，真机已验证）——写入用 CAN_TIMEOUT_PER_MS 换算
 
 
 def float_to_u16(x: float, lo: float, hi: float) -> int:
