@@ -22,6 +22,21 @@ class JointMapper:
             raw = json.load(f)
         return cls(raw["joints"], alpha=raw.get("alpha", 0.3))
 
+    def rebase(self, raw_deg: dict[int, float], base_rads: list[float]) -> None:
+        """把锚点重设为当前姿态：zero_deg=当前 leader 角，base_rad=当前 follower 角。
+
+        跟随变为相对模式（从两边此刻的姿态起步，启动零跳变），免疫锚点过期/
+        多圈计数漂移。缺读或 follower 位置非有限的关节保持原锚不动。
+        """
+        for i, j in enumerate(self._joints):
+            deg = raw_deg.get(j["servo"])
+            if deg is None or not math.isfinite(base_rads[i]):
+                continue
+            j["zero_deg"] = deg
+            j["base_rad"] = base_rads[i]
+            self._smooth[i] = deg
+        self._last_out = [j["base_rad"] for j in self._joints]
+
     def map(self, raw_deg: dict[int, float]) -> list[float]:
         out = list(self._last_out)
         for i, j in enumerate(self._joints):

@@ -24,6 +24,8 @@ def main():
     ap.add_argument("--map", dest="map_path", default="configs/star_to_maker.json")
     ap.add_argument("--rate", type=float, default=100.0)
     ap.add_argument("--sync-threshold", type=float, default=0.8, help="启动姿势差确认阈值 rad")
+    ap.add_argument("--rebase", action="store_true",
+                    help="启动时把锚点重设为两边当前姿态（相对模式，启动零跳变；台架/演示推荐）")
     a = ap.parse_args()
     star_ids = [int(x) for x in a.star_ids.split(",")]
 
@@ -41,6 +43,11 @@ def main():
         raw = {i: data[i].angle_deg for i in star_ids if data.get(i) and data[i].reliable}
         if len(raw) != len(star_ids):
             raise SystemExit(f"leader 只读到 {sorted(raw)} —— 查 star 串口/ID")
+        if a.rebase:
+            arm.refresh()
+            time.sleep(0.2)
+            mapper.rebase(raw, arm.get_joint_positions())
+            print("已把锚点重设为当前姿态（相对模式，启动零跳变）")
         targets = mapper.map(raw)
         diff = max(abs(t - c) for t, c in zip(targets, arm.get_joint_positions()))
         print(f"启动姿势差 max={diff:.2f} rad（follower 将以限速平滑跟过去）")
