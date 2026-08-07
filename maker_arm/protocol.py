@@ -170,3 +170,29 @@ def parse_frame(can_id: int, data: bytes, params: MotorParams = None):
     if comm == COMM_FAULT:
         return FaultReport(motor_id=(can_id >> 8) & 0xFF, raw=bytes(data))
     return None
+
+
+# ── 协议切换与 MIT 互操作（最小子集） ─────────────────────────────
+# 电机通信协议为持久互斥模式（私有=默认/CANopen/MIT），切换后重新上电生效。
+COMM_SET_PROTOCOL = 25
+
+
+def encode_set_protocol(motor_id: int, f_cmd: int,
+                        host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
+    """私有协议 Type25：切换电机通信协议（0=私有 1=CANopen 2=MIT）。
+
+    魔术序列 01..06 必须在 byte0~5（2026-08-07 电机 7 真机实测锚定），
+    F_CMD 在 byte6。应答为 Type0 设备 ID 帧。重新上电生效。
+    """
+    return (make_can_id(COMM_SET_PROTOCOL, host_id, motor_id),
+            bytes([1, 2, 3, 4, 5, 6, f_cmd & 0xFF, 0]))
+
+
+def mit_switch_protocol_data(f_cmd: int) -> bytes:
+    """MIT 协议指令 8（协议切换）数据域；帧用 11 位标准帧、arbitration_id=电机 id。"""
+    return bytes([0xFF] * 6 + [f_cmd & 0xFF, 0xFD])
+
+
+def mit_fault_query_data() -> bytes:
+    """MIT 协议指令 5（F_CMD=0 读故障状态，无副作用）——用作 MIT 模式探测 ping。"""
+    return bytes([0xFF] * 6 + [0x00, 0xFB])

@@ -80,6 +80,19 @@ def test_parse_feedback_fault_bits():
     assert fb.motor_id == 3 and fb.fault_bits == 0x21
 
 
+def test_encode_set_protocol_golden():
+    # 2026-08-07 电机7 实测锚定：Type25，魔术序列 01..06 @byte0~5，F_CMD @byte6
+    cid, data = p.encode_set_protocol(7, 2)
+    assert cid == 0x1900FD07
+    assert data == bytes.fromhex("0102030405060200")
+
+
+def test_mit_interop_frames_golden():
+    assert p.mit_switch_protocol_data(0) == bytes.fromhex("FFFFFFFFFFFF00FD")  # 指令8 回私有
+    assert p.mit_switch_protocol_data(2) == bytes.fromhex("FFFFFFFFFFFF02FD")
+    assert p.mit_fault_query_data() == bytes.fromhex("FFFFFFFFFFFF00FB")       # 指令5 只读探测
+
+
 def test_parse_param_reply():
     # 电机 2 回读 VBUS=24.5：comm=17，ID Bit8~15=电机ID，目标=主机
     cid = (17 << 24) | (2 << 8) | 0xFD

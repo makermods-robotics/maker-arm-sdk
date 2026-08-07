@@ -10,6 +10,13 @@ from .base import CanBackend
 
 CAN_EFF_FLAG = 0x80000000
 CAN_EFF_MASK = 0x1FFFFFFF
+CAN_ERR_FLAG = 0x20000000
+
+
+def _frame_id(can_id: int, extended: bool) -> int:
+    return (can_id | CAN_EFF_FLAG) if extended else (can_id & 0x7FF)
+
+
 _FRAME = struct.Struct("=IB3x8s")  # can_id | dlc | pad | data
 log = logging.getLogger("maker_arm.transport")
 
@@ -41,8 +48,8 @@ class SocketCanBackend(CanBackend):
             self._sock.close()
             self._sock = None
 
-    def send(self, can_id: int, data: bytes) -> None:
-        frame = _FRAME.pack(can_id | CAN_EFF_FLAG, len(data), data.ljust(8, b"\x00"))
+    def send(self, can_id: int, data: bytes, extended: bool = True) -> None:
+        frame = _FRAME.pack(_frame_id(can_id, extended), len(data), data.ljust(8, b"\x00"))
         with self._tx_lock:
             self._sock.send(frame)
 
@@ -59,8 +66,11 @@ class SocketCanBackend(CanBackend):
                 break
             try:
                 cid, dlc, payload = _FRAME.unpack(buf)
+                if cid & CAN_ERR_FLAG:
+                    continue
                 cb = self._cb
-                if cb and (cid & CAN_EFF_FLAG):
-                    cb(cid & CAN_EFF_MASK, payload[:dlc])
+                if cb:
+                    rid = (cid & CAN_EFF_MASK) if (cid & CAN_EFF_FLAG) else (cid & 0x7FF)
+                    cb(rid, payload[:dlc])
             except Exception:
                 log.exception("socketcan RX 帧处理异常（继续收帧）")

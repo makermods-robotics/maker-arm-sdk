@@ -22,3 +22,18 @@ def test_loopback_two_sockets():
         assert got and got[0][0] == 0x0300FD01 and got[0][1] == bytes(8)
     finally:
         a.close(); b.close()
+
+
+def test_loopback_standard_frame():
+    a, b = SocketCanBackend("vcan0"), SocketCanBackend("vcan0")
+    got = []
+    b.set_recv_callback(lambda cid, d: got.append((cid, d)))
+    a.open(); b.open()
+    try:
+        a.send(0x007, bytes.fromhex("FFFFFFFFFFFF00FD"), extended=False)
+        deadline = time.monotonic() + 1.0
+        while not got and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert got and got[0][0] == 0x007 and got[0][1].hex() == "ffffffffffff00fd"
+    finally:
+        a.close(); b.close()
