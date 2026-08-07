@@ -4,15 +4,17 @@
 # direction/offset/lo/hi 为占位：按 README bring-up 序列
 #（monitor 手推核对方向 → set_zero → monitor 按 Enter 采限位）填实。
 control_rate_hz: 200
-max_velocity: 1.5
+max_velocity: 3.0          # 台架遥操实证值（1.0 跟手肉）
 limit_margin: 0.05
 feedback_timeout: 0.2
 motor_can_timeout_ms: 200
+# 3~7 号 kp/kd 为 2026-08-07 台架实证值（抱住/正弦/遥操跟手全通过）；
+# 1~2 号占位，待接线后按同法调。装臂后 J2/J3（RS02）扛负载可能需要加 kp。
 joints:
   - {motor_id: 1, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 60, kd: 2.0}
   - {motor_id: 2, model: RS02, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 80, kd: 3.0}
-  - {motor_id: 3, model: RS02, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 80, kd: 3.0}
-  - {motor_id: 4, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}
-  - {motor_id: 5, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}
-  - {motor_id: 6, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.0}
+  - {motor_id: 3, model: RS02, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 40, kd: 1.5}
+  - {motor_id: 4, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 30, kd: 1.0}
+  - {motor_id: 5, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 30, kd: 1.0}
+  - {motor_id: 6, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 30, kd: 1.0}
   - {motor_id: 7, model: RS00, direction: 1, offset: 0.0, lo: -3.0, hi: 3.0, kp: 20, kd: 0.5}  # 夹爪：MIT 模式，夹持力=kp×位置误差，kp 小=柔性限力
