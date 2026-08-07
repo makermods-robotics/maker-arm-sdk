@@ -25,8 +25,10 @@ def test_mit_alive():
 
 def test_switch_acked_accepts_experiment_frames():
     mcu = bytes.fromhex("7f5e38000c72b106")
-    assert switch_acked([(0x7FE, mcu)], 7)      # 私有→MIT 的 Type0 应答（实测）
+    assert switch_acked([(0x7FE, mcu)], 7)      # 私有→MIT Type0 应答 (7<<8)|0xFE（实测）
+    assert switch_acked([(0x7FFE, mcu)], 127)   # 同形态，电机 127（2026-08-07 实测）
     assert switch_acked([(0x007, mcu)], 7)      # MIT→私有 指令8 应答（实测）
+    assert not switch_acked([(0x7FE, mcu)], 8)  # 别电机的 Type0 应答不认
 
 
 def test_switch_acked_rejects_noise():

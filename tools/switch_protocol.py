@@ -35,13 +35,14 @@ def mit_alive(replies: list, motor_id: int, host_id: int = p.HOST_CAN_ID) -> boo
 def switch_acked(replies: list, motor_id: int) -> bool:
     """切换指令应答判定——白名单：只认三种实测/文档形态（8 字节 MCU 码载荷）。
 
-    实测（2026-08-07）：私有→MIT 的 Type0 应答 cid=0x7FE；MIT→私有的指令8应答
-    cid=电机id；另按 MIT 文档保留"发给主机且 payload[0]=电机id"的形态。其余一律不认。
+    实测：私有→MIT 的 Type0 应答 cid=(电机ID<<8)|0xFE（电机7→0x7FE、电机127→0x7FFE，
+    2026-08-07 两次实测）；MIT→私有的指令8应答 cid=电机id；另按 MIT 文档保留
+    "发给主机且 payload[0]=电机id"的形态。其余一律不认。
     """
     for cid, d in replies:
         if len(d) != 8:
             continue
-        if cid == 0x7FE or cid == motor_id:
+        if ((cid >> 8) == motor_id and (cid & 0xFF) == 0xFE) or cid == motor_id:
             return True
         if cid == p.HOST_CAN_ID and d[0] == motor_id:
             return True
