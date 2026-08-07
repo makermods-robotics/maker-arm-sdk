@@ -22,3 +22,5 @@
 7. **收尾**：把调优后的 gains/方向回写进两份 json；台架验收完成，整臂装配后用 maker_arm_lerobot.json 重走本 runbook（ids 换 1~7）。
 
 已知项：MIT 模式 set_zero 持久性未验证——若标定跨断电丢失，改为在私有态用 tools/set_zero.py 标零（工作流本就推荐）。
+
+> 注（2026-08-07 起现役=02 号臂）：J2/J3（shoulder_lift/elbow_flex）为 RS02 电机，lerobot 侧型号按协议文档数据暂定 **O1**（±17Nm/±44rad/s）。装臂后必须实测核对（嫌疑：上游 O 系列与 RS 系列编号错位，O2=±20Nm/±33 是另一档）——方法：J2 用 mit_spin 定速转，对比 MIT Present_Velocity 与私有协议读数；若相差 44/33 倍即型号选错。
