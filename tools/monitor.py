@@ -110,11 +110,16 @@ def main():
     arm.connect()
     n = arm.config.n_joints
     mins, maxs = [math.inf] * n, [-math.inf] * n
-    try:
-        import termios
-        termios.tcflush(sys.stdin, termios.TCIFLUSH)   # 清掉残留回车，防启动即误触发写入
-    except Exception:
-        pass
+    stdin_ok = sys.stdin.isatty()
+    if stdin_ok:
+        try:
+            import termios
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)   # 清掉残留回车
+        except Exception:
+            pass
+    else:
+        print("⚠️ stdin 不是终端（比如经 conda run 启动）：Enter 写入不可用，只做监视。"
+              "要用限位采集请直接跑: ~/miniconda3/envs/maker-arm/bin/python tools/monitor.py ...")
     print("已连接（未使能，可安全手推）。")
     try:
         while True:
@@ -131,8 +136,13 @@ def main():
                     for i in range(n)]
             rows.append("—— 手推各关节到两端极限。按 Enter 写入限位并退出；Ctrl-C 退出不写。")
             print("\x1b[2J\x1b[H" + "\n".join(rows), flush=True)
-            if select.select([sys.stdin], [], [], 0)[0]:
-                sys.stdin.readline()
+            if stdin_ok and select.select([sys.stdin], [], [], 0)[0]:
+                line = sys.stdin.readline()
+                if line == "":
+                    # stdin 是 EOF（如经 conda run 启动）：select 恒报可读但读到空——
+                    # 不是用户按键，禁用 Enter 功能继续监视，绝不误写入。
+                    stdin_ok = False
+                    continue
                 print()
                 write_limits(a.config, a.json_path, mins, maxs, a.backoff, arm.config.joints)
                 break
