@@ -24,6 +24,7 @@ class ArmState(Enum):
 
 
 class Arm:
+    MODE_FAULT_TICKS = 5   # mode≠2 连续拍数阈值（200Hz 下 25ms）——容忍使能瞬间的陈旧反馈
     def __init__(self, config: ArmConfig, backend: CanBackend):
         self.config = config
         self._backend = backend
@@ -37,6 +38,7 @@ class Arm:
         self._running = False
         self._loop_thread: Optional[threading.Thread] = None
         self.fault_reason: Optional[str] = None
+        self._mode_bad: dict[int, int] = {}
 
     @classmethod
     def from_yaml(cls, path: str, backend: str = "socketcan", **backend_kwargs) -> "Arm":
@@ -156,6 +158,7 @@ class Arm:
             m.enable()
         self._state = ArmState.ENABLED
         self.fault_reason = None
+        self._mode_bad.clear()
         if start_loop:
             self._running = True
             self._loop_thread = threading.Thread(target=self._control_loop,
@@ -245,9 +248,16 @@ class Arm:
             if fb and fb.fault_bits:
                 self._enter_fault(f"电机 {m.motor_id}: {fault_text(fb.fault_bits)} (bits=0b{fb.fault_bits:06b})")
                 return
+            # mode 检查带持续性容忍：使能后头几拍缓存里可能还是探测时代的
+            # mode=0 旧反馈（真机竞态，毫秒级），连续 MODE_FAULT_TICKS 拍异常才判真故障。
             if fb and fb.mode != 2:
-                self._enter_fault(f"电机 {m.motor_id} 模式异常 mode={fb.mode}（未在运控状态）")
-                return
+                i = self._mode_bad.setdefault(m.motor_id, 0) + 1
+                self._mode_bad[m.motor_id] = i
+                if i >= self.MODE_FAULT_TICKS:
+                    self._enter_fault(f"电机 {m.motor_id} 模式异常 mode={fb.mode}（未在运控状态，持续 {i} 拍）")
+                    return
+            else:
+                self._mode_bad[m.motor_id] = 0
 
     def _enter_fault(self, reason: str) -> None:
         log.error("FAULT: %s", reason)

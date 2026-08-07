@@ -28,7 +28,7 @@ transport(socketcan/at/mock) → protocol(纯函数) → motor → arm(状态机
 
 5. 量限位：标零后再跑 `python tools/monitor.py`，逐关节手推到两端极限，屏幕实时显示 min/max；按 **Enter** 自动把回退后的 lo/hi 写入 `configs/maker_arm_6dof.yaml`（保留注释，`.bak` 备份，写后校验失败自动回滚），原始记录存 `configs/limits_capture.json`；没推过的关节会被跳过并警告。Ctrl-C 退出不写。之后 `python examples/02_enable_hold.py` 调 kp/kd
 
-> 注：首次使能若立刻报"模式异常 mode=0"，多为电机 enable 应答时序问题——检查使能帧后是否收到 mode=2 反馈再重试。
+> 注：mode≠2 健康检查带 25ms 持续性容忍（连续 5 拍才判故障），使能瞬间的陈旧反馈竞态不会误报；若仍报"模式异常"即是真没进运控态，查该电机使能应答。
 
 6. `python tools/calib_star_map.py --star-port /dev/ttyUSBx` → `python examples/04_teleop_star.py --star-port /dev/ttyUSBx`
 

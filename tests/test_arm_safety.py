@@ -74,11 +74,29 @@ def test_enable_hard_fails_on_wrong_run_mode():
     assert arm.state is ArmState.CONNECTED
 
 
-def test_bad_mode_feedback_enters_fault():
+def test_bad_mode_feedback_enters_fault_after_persistence():
     arm, be = make_connected_arm()
     arm.enable(start_loop=False)
     be.responder = None
-    be.inject(*feedback_frame(1, mode=0))   # 电机掉出运控态
-    arm._tick(dt=0.005)
+    be.inject(*feedback_frame(1, mode=0))   # 电机掉出运控态（持续）
+    for _ in range(4):                      # 前 4 拍：容忍（可能是使能后的陈旧缓存）
+        arm._tick(dt=0.005)
+        assert arm.state is ArmState.ENABLED
+    arm._tick(dt=0.005)                     # 第 5 拍仍异常 → 判真故障
     assert arm.state is ArmState.FAULT
     assert "模式异常" in arm.fault_reason
+
+
+def test_transient_bad_mode_is_tolerated():
+    """使能后前几拍收到探测时代的 mode=0 旧反馈（真机竞态）——不得误报 FAULT。"""
+    arm, be = make_connected_arm()
+    arm.enable(start_loop=False)
+    be.responder = None
+    be.inject(*feedback_frame(1, mode=0))   # 陈旧缓存
+    arm._tick(dt=0.005)
+    arm._tick(dt=0.005)
+    assert arm.state is ArmState.ENABLED
+    be.inject(*feedback_frame(1, mode=2))   # 新鲜反馈到达
+    for _ in range(10):
+        arm._tick(dt=0.005)
+    assert arm.state is ArmState.ENABLED    # 计数已复位，永不误报
