@@ -1,12 +1,13 @@
 {
+  "_comment": "direction/scale 预填自 star→metal 实测方向表（~/makermods/star_metal.json joint_directions），maker-arm 与 metal 对 star 的响应方向一致；zero_deg/base_rad 由标定或启动锚定覆盖",
   "alpha": 0.3,
   "joints": [
-    {"servo": 0, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
-    {"servo": 1, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
-    {"servo": 2, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
-    {"servo": 3, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
+    {"servo": 0, "zero_deg": 0.0, "base_rad": 0.0, "direction": -1.0, "scale": 1.0},
+    {"servo": 1, "zero_deg": 0.0, "base_rad": 0.0, "direction": -1.0, "scale": 1.0},
+    {"servo": 2, "zero_deg": 0.0, "base_rad": 0.0, "direction": -1.0, "scale": 0.667},
+    {"servo": 3, "zero_deg": 0.0, "base_rad": 0.0, "direction": -1.0, "scale": 1.0},
     {"servo": 4, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
-    {"servo": 5, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0},
-    {"servo": 6, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.0}
+    {"servo": 5, "zero_deg": 0.0, "base_rad": 0.0, "direction": -1.0, "scale": 1.0},
+    {"servo": 6, "zero_deg": 0.0, "base_rad": 0.0, "direction": 1.0, "scale": 1.895}
   ]
 }
