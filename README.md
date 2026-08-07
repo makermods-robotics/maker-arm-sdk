@@ -56,3 +56,7 @@ transport(socketcan/at/mock) → protocol(纯函数) → motor → arm(状态机
     conda run -n maker-arm pytest -q                          # 协议/传输/电机/机械臂单测
     sudo modprobe vcan && sudo ip link add dev vcan0 type vcan; sudo ip link set up vcan0
     conda run -n maker-arm pytest tests/test_vcan_integration.py -q   # 无硬件全链路
+
+## lerobot 遥操
+
+接入 lerobot（RobStride MIT 协议 + 上游 RobstrideMotorsBus）见 `docs/LEROBOT_BRINGUP.md`；协议摆渡工具 `tools/switch_protocol.py`，看门狗固化 `tools/persist_can_timeout.py`。
