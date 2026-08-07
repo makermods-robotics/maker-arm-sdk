@@ -97,7 +97,7 @@ def _fmt(x):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", default="configs/maker_arm01.yaml")
+    ap.add_argument("--config", default="configs/maker_arm02.yaml")
     ap.add_argument("--backend", choices=["socketcan", "at"], default="socketcan")
     ap.add_argument("--channel", default="can0")
     ap.add_argument("--port", default="/dev/ttyUSB0")

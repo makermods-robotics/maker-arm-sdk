@@ -1,6 +1,6 @@
 # maker-arm
 
-RobStride 电机自研机械臂（**6 关节 + 1 夹爪**，夹爪为 RS00 @ID7，作普通 MIT 第 7 关节——夹持力 = kp×位置误差，kp 小即柔性限力）纯 Python SDK。协议同源 EDULITE A3（RobStride 私有 CAN @1Mbps）。支持按关节混装型号：YAML 里每关节 `model:` 字段（RS00/RS02，默认 RS00）决定 T/V 映射表。一号臂全 RS00 用 `configs/maker_arm01.yaml`；二号臂 maker-arm02（J2/J3=RS02）用 `--config configs/maker_arm02.yaml`。设计文档：makermods 仓库 `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md`。
+RobStride 电机自研机械臂（**6 关节 + 1 夹爪**，夹爪为 RS00 @ID7，作普通 MIT 第 7 关节——夹持力 = kp×位置误差，kp 小即柔性限力）纯 Python SDK。协议同源 EDULITE A3（RobStride 私有 CAN @1Mbps）。支持按关节混装型号：YAML 里每关节 `model:` 字段（RS00/RS02，默认 RS00）决定 T/V 映射表。现役为 maker-arm02（J2/J3=RS02，其余 RS00）：`configs/maker_arm02.yaml` 即各工具默认配置。设计文档：makermods 仓库 `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md`。
 
 ## 安装
 
