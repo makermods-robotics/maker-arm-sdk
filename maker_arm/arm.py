@@ -126,20 +126,21 @@ class Arm:
     def enable(self, start_loop: bool = True) -> None:
         if self._state is not ArmState.CONNECTED:
             raise StateError(f"enable() 需要 CONNECTED 态，当前 {self._state.name}")
+        # canTimeout 协议单位为 50µs/计数（20000=1s）：毫秒 → 计数值 ×20
+        timeout_counts = self.config.motor_can_timeout_ms * protocol.CAN_TIMEOUT_PER_MS
         for m in self.motors:
             m.write_param(protocol.ParamIndex.RUN_MODE, 0, "u8")          # 0=运控(MIT)
-            m.write_param(protocol.ParamIndex.CAN_TIMEOUT,
-                          self.config.motor_can_timeout_ms, "u32")        # 电机侧看门狗
+            m.write_param(protocol.ParamIndex.CAN_TIMEOUT, timeout_counts, "u32")  # 电机侧看门狗
         # 回读校验：确认电机确实接受了 RUN_MODE / CAN_TIMEOUT 设置
         for m in self.motors:
             try:
                 run_mode = m.read_param(protocol.ParamIndex.RUN_MODE, dtype="u8")
                 if run_mode != 0:
                     raise ConnectError(f"电机 {m.motor_id} RUN_MODE 回读 {run_mode}≠0（运控模式未生效）")
-                timeout_ms = m.read_param(protocol.ParamIndex.CAN_TIMEOUT, dtype="u32")
-                if timeout_ms != self.config.motor_can_timeout_ms:
-                    log.warning("电机 %d CAN_TIMEOUT 回读 %s ≠ 配置 %d（真机核对单位）",
-                                m.motor_id, timeout_ms, self.config.motor_can_timeout_ms)
+                rb = m.read_param(protocol.ParamIndex.CAN_TIMEOUT, dtype="u32")
+                if rb != timeout_counts:
+                    log.warning("电机 %d CAN_TIMEOUT 回读 %s ≠ 期望 %d（=%dms×20）",
+                                m.motor_id, rb, timeout_counts, self.config.motor_can_timeout_ms)
             except ParamTimeout as e:
                 raise ConnectError(f"使能前参数回读失败: {e}") from e
         # 首帧保护：目标 = 当前实际位置（probe 刷新反馈，重试 10 次）

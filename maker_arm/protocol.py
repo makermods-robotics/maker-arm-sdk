@@ -49,6 +49,9 @@ COMM_SAVE = 22
 COMM_VERSION = 26
 
 
+CAN_TIMEOUT_PER_MS = 20   # canTimeout 单位 50µs/计数（协议：20000=1s）——真机验证过
+
+
 class ParamIndex:
     RUN_MODE = 0x7005      # u8: 0=运控(MIT)
     LIMIT_TORQUE = 0x700B  # f32

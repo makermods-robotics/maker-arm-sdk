@@ -44,7 +44,7 @@ class FakeMotorFleet:
             if idx == p.ParamIndex.RUN_MODE:
                 value = struct.pack("<B3x", 0)
             elif idx == p.ParamIndex.CAN_TIMEOUT:
-                value = struct.pack("<I", 200)
+                value = struct.pack("<I", 4000)   # 200ms × 20 计数/ms
             else:
                 value = struct.pack("<f", 0.0)
             self._be.send(cid, struct.pack("<H2x", idx) + value)

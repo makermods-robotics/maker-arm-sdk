@@ -20,7 +20,7 @@ def two_joint_cfg():
 
 def auto_feedback(positions):
     """Mock 应答器：任何指令帧都回一帧当前位置反馈（模拟真电机）；
-    COMM_READ_PARAM 额外回一帧参数回读（RUN_MODE=0，CAN_TIMEOUT=200，其余 0.0）。"""
+    COMM_READ_PARAM 额外回一帧参数回读（RUN_MODE=0，CAN_TIMEOUT=4000 计数，其余 0.0）。"""
     def responder(cid, data):
         mid = cid & 0xFF
         if mid not in positions:
@@ -31,7 +31,7 @@ def auto_feedback(positions):
             if idx == p.ParamIndex.RUN_MODE:
                 value = struct.pack("<B3x", 0)
             elif idx == p.ParamIndex.CAN_TIMEOUT:
-                value = struct.pack("<I", 200)
+                value = struct.pack("<I", 4000)   # 200ms × 20 计数/ms
             else:
                 value = struct.pack("<f", 0.0)
             reply_cid = (p.COMM_READ_PARAM << 24) | (mid << 8) | p.HOST_CAN_ID

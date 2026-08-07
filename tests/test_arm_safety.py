@@ -45,6 +45,20 @@ def test_nonfinite_targets_rejected():
     assert arm.set_joint_targets([0.0, 0.0]) is True
 
 
+def test_enable_writes_can_timeout_in_50us_counts():
+    """协议单位：canTimeout 20000=1s（50µs/计数）。config 的 200ms 必须写成 4000。
+    真机教训：直接写 200 = 10ms 阈值，USB 抖动即让电机自我泄力回 reset(mode=0)。"""
+    import struct
+    from maker_arm import protocol as p
+    arm, be = make_connected_arm()
+    arm.enable(start_loop=False)
+    writes = [(cid, d) for cid, d in be.sent if (cid >> 24) & 0x1F == p.COMM_WRITE_PARAM
+              and int.from_bytes(d[:2], "little") == p.ParamIndex.CAN_TIMEOUT]
+    assert writes, "必须写 CAN_TIMEOUT"
+    for _, d in writes:
+        assert struct.unpack("<I", d[4:8])[0] == 200 * p.CAN_TIMEOUT_PER_MS == 4000
+
+
 def test_enable_verifies_run_mode():
     arm, be = make_connected_arm()
     arm.enable(start_loop=False)   # auto_feedback 回 RUN_MODE=0 → 成功
