@@ -110,6 +110,11 @@ def main():
     arm.connect()
     n = arm.config.n_joints
     mins, maxs = [math.inf] * n, [-math.inf] * n
+    try:
+        import termios
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)   # 清掉残留回车，防启动即误触发写入
+    except Exception:
+        pass
     print("已连接（未使能，可安全手推）。")
     try:
         while True:
