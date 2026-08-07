@@ -30,6 +30,24 @@ def mit_alive(replies: list, motor_id: int, host_id: int = p.HOST_CAN_ID) -> boo
                and len(d) >= 1 and d[0] == motor_id for cid, d in replies)
 
 
+def switch_acked(replies: list, motor_id: int) -> bool:
+    """切换指令的应答判定（设备ID/MCU码帧，8 字节载荷）。
+
+    实测（2026-08-07）：私有→MIT 的 Type0 应答 cid=0x7FE；MIT→私有的指令8应答
+    cid=电机id——两者载荷都是 8 字节 MCU 唯一码。排除两类误认：普通私有反馈帧、
+    发给主机但属于其它电机的 MIT 状态帧。
+    """
+    for cid, d in replies:
+        if len(d) != 8:
+            continue
+        if classify_reply(cid) == "private" and (cid >> 24) & 0x1F == p.COMM_FEEDBACK:
+            continue
+        if cid == p.HOST_CAN_ID and (len(d) < 1 or d[0] != motor_id):
+            continue
+        return True
+    return False
+
+
 def detect(be, replies: list, motor_id: int) -> str | None:
     """探测电机当前协议：分别发私有停止帧与 MIT 只读故障查询，看谁有应答。"""
     replies.clear()
@@ -76,7 +94,7 @@ def main():
             else:
                 be.send(mid, p.mit_switch_protocol_data(0), extended=False)  # MIT 指令8 → 私有
             time.sleep(0.5)
-            if replies:
+            if switch_acked(list(replies), mid):
                 switched.append(mid)
                 print(f"电机{mid}: {cur} → {a.to} 指令已应答 ✅")
             else:
