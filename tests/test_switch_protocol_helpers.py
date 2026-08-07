@@ -34,3 +34,5 @@ def test_switch_acked_rejects_noise():
     assert not switch_acked([(0x028003FD, bytes(8))], 7)          # 别电机私有反馈
     assert not switch_acked([(0x0FD, bytes([3]) + bytes(7))], 7)  # 别电机 MIT 状态帧
     assert not switch_acked([(0x007, bytes(4))], 7)               # 载荷长度不对
+    assert not switch_acked([(0x003, bytes(8))], 7)               # 无关 8 字节帧（白名单外）
+    assert switch_acked([(0x0FD, bytes([7]) + bytes(7))], 7)      # 发给主机且 payload[0]=本机 → 认
