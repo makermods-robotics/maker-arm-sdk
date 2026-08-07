@@ -121,6 +121,7 @@ def main():
         print("⚠️ stdin 不是终端（比如经 conda run 启动）：Enter 写入不可用，只做监视。"
               "要用限位采集请直接跑: ~/miniconda3/envs/maker-arm/bin/python tools/monitor.py ...")
     print("已连接（未使能，可安全手推）。")
+    first = True
     try:
         while True:
             arm.refresh()
@@ -131,11 +132,19 @@ def main():
                 if math.isfinite(p):
                     mins[i] = min(mins[i], p)
                     maxs[i] = max(maxs[i], p)
-            rows = [f"J{i+1}: {pos[i]:+7.3f} rad {vel[i]:+6.2f} rad/s {tmp[i]:5.1f}°C "
-                    f"min {_fmt(mins[i])} max {_fmt(maxs[i])} {fault_text(flt[i])}"
+            rows = [f"电机{arm.config.joints[i].motor_id}: {pos[i]:+7.3f} rad {vel[i]:+6.2f} rad/s "
+                    f"{tmp[i]:5.1f}°C min {_fmt(mins[i])} max {_fmt(maxs[i])} "
+                    f"行程 {maxs[i] - mins[i]:5.3f} {fault_text(flt[i])}"
+                    if math.isfinite(mins[i]) else
+                    f"电机{arm.config.joints[i].motor_id}: 等待数据……"
                     for i in range(n)]
-            rows.append("—— 手推各关节到两端极限。按 Enter 写入限位并退出；Ctrl-C 退出不写。")
-            print("\x1b[2J\x1b[H" + "\n".join(rows), flush=True)
+            rows.append("—— 手推到两端（行程 ≥0.3 才会写入）。Enter 写入并退出；Ctrl-C 退出不写。")
+            if first:
+                print("\n".join(rows), flush=True)
+                first = False
+            else:
+                # 原地刷新：光标回退 len(rows) 行，逐行擦除重写（不清屏、不刷爆滚动缓冲）
+                print(f"\x1b[{len(rows)}F" + "\n".join("\x1b[2K" + r for r in rows), flush=True)
             if stdin_ok and select.select([sys.stdin], [], [], 0)[0]:
                 line = sys.stdin.readline()
                 if line == "":
