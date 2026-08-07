@@ -3,6 +3,8 @@
 
 私有=维护态（maker-arm SDK/工具），MIT=lerobot 运行态（RobstrideMotorsBus）。
 每台电机先探测当前协议再动作；帧格式 2026-08-07 真机实测锚定。仅支持 socketcan。
+⚠️ 探测用的是私有停止帧：对"仍在使能状态"的电机运行本工具会让它泄力——
+确保电机未使能/机械臂已支撑后再运行。
 """
 
 import argparse
