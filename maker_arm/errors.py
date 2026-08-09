@@ -1,4 +1,4 @@
-"""异常类型与故障码翻译。低频运维路径抛异常；高频控制路径只记日志。"""
+"""Exception types and fault code translation. Low-frequency ops paths raise exceptions; high-frequency control paths only log."""
 
 
 class MakerArmError(Exception):
@@ -17,20 +17,20 @@ class StateError(MakerArmError):
     pass
 
 
-# 反馈帧 ID Bit16~21 的 6 位故障码，按 RobStride 通用定义。
-# TODO-硬件验证：真机 bring-up 时人为触发（如欠压）对照一次位定义。
+# The 6-bit fault code at feedback frame ID Bit16~21, per the RobStride common definition.
+# TODO-hardware verification: cross-check the bit definitions once during real-hardware bring-up by deliberately triggering a fault (e.g. undervoltage).
 FAULT_NAMES = {
-    0: "欠压",
-    1: "过流",
-    2: "过温",
-    3: "磁编码故障",
-    4: "HALL 编码故障",
-    5: "编码器未标定",
+    0: "undervoltage",
+    1: "overcurrent",
+    2: "overtemperature",
+    3: "magnetic encoder fault",
+    4: "hall encoder fault",
+    5: "encoder not calibrated",
 }
 
 
 def fault_text(bits: int) -> str:
     if not bits:
-        return "无故障"
+        return "no fault"
     names = [FAULT_NAMES.get(i, f"bit{i}") for i in range(max(6, bits.bit_length())) if bits & (1 << i)]
     return "|".join(names)

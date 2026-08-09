@@ -1,4 +1,4 @@
-"""原生 AF_CAN socket 后端（不依赖 python-can）。Linux 内核 CAN 帧固定 16 字节。"""
+"""Native AF_CAN socket backend (no python-can dependency). The Linux kernel CAN frame is a fixed 16 bytes."""
 
 import logging
 import socket
@@ -73,4 +73,4 @@ class SocketCanBackend(CanBackend):
                     rid = (cid & CAN_EFF_MASK) if (cid & CAN_EFF_FLAG) else (cid & 0x7FF)
                     cb(rid, payload[:dlc])
             except Exception:
-                log.exception("socketcan RX 帧处理异常（继续收帧）")
+                log.exception("socketcan RX frame-processing exception (continuing to receive frames)")

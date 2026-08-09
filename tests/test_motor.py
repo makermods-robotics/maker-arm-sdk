@@ -39,8 +39,9 @@ def test_feedback_ignores_other_motor():
     m, be = make_motor(2)
     be.inject(*feedback_frame(2, pos=1.0))
     m2_only = m.feedback.position
-    # 其它电机的帧由 Arm 分发，Motor.handle_frame 假定只收到自己的消息——
-    # 这里验证 handle_frame 对 motor_id 不匹配的消息直接忽略（防御）
+    # Frames for other motors are dispatched by Arm; Motor.handle_frame assumes it only
+    # receives its own messages -- verify here that handle_frame simply ignores a
+    # message whose motor_id does not match (defensive check)
     m.handle_frame(p.parse_frame(*feedback_frame(3, pos=2.0)))
     assert m.feedback.position == m2_only
 
@@ -69,7 +70,7 @@ def test_read_param_ignores_mismatched_reply():
     def stale_responder(cid, data):
         if (cid >> 24) & 0x1F == p.COMM_READ_PARAM:
             reply_id = (p.COMM_READ_PARAM << 24) | (1 << 8) | p.HOST_CAN_ID
-            # 回一个 index 不匹配的迟到回包：必须被忽略 → 超时
+            # Reply with a late packet whose index doesn't match: must be ignored -> timeout
             return [(reply_id, struct.pack("<H2x", 0x9999) + struct.pack("<f", 1.0))]
     be.responder = stale_responder
     with pytest.raises(ParamTimeout):

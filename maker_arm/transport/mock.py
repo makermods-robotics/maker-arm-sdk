@@ -1,4 +1,4 @@
-"""测试/无硬件用后端：记录发送、可注入接收、可挂自动应答器。"""
+"""Backend for testing / no hardware: records sends, allows injecting receives, and supports attaching an auto-responder."""
 
 from typing import Callable, Optional
 
@@ -10,7 +10,7 @@ class MockBackend(CanBackend):
         self.sent: list[tuple[int, bytes]] = []
         self.is_open = False
         self._cb: Optional[Callable[[int, bytes], None]] = None
-        # responder(can_id, data) -> 要注入的 [(can_id, data), ...] 或 None
+        # responder(can_id, data) -> [(can_id, data), ...] to inject, or None
         self.responder: Optional[Callable] = None
 
     def open(self) -> None:

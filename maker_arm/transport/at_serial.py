@@ -1,7 +1,7 @@
-"""灵足官方 USB-CAN 板（GD32+CH340）后端：串口 921600 8N1，AT 帧封装。
+"""RobStride's official USB-CAN board (GD32+CH340) backend: serial 921600 8N1, AT frame encapsulation.
 
-帧格式（收发同构）：b"AT" + ((can_id29<<3)|0x04) 大端4字节 + len + data(0~8) + b"\r\n"
-参考 el_a3_sdk/at_can_driver.py（本机已实测 7/7 电机通信）。
+Frame format (identical for TX and RX): b"AT" + ((can_id29<<3)|0x04) as big-endian 4 bytes + len + data(0~8) + b"\r\n"
+Reference: el_a3_sdk/at_can_driver.py (verified on real hardware, 7/7 motors communicating).
 """
 
 import logging
@@ -19,7 +19,7 @@ def at_encode(can_id: int, data: bytes) -> bytes:
 
 
 class AtFrameParser:
-    """字节流 → 帧。处理垃圾前缀、半包、坏帧重同步。"""
+    """Byte stream -> frames. Handles garbage prefixes, partial packets, and re-sync after bad frames."""
 
     def __init__(self):
         self._buf = b""
@@ -30,14 +30,14 @@ class AtFrameParser:
         while True:
             i = self._buf.find(b"AT")
             if i < 0:
-                self._buf = self._buf[-1:]      # 留 1 字节防 'A''T' 被拆开
+                self._buf = self._buf[-1:]      # keep 1 byte so 'A''T' can't be split across chunks
                 break
             self._buf = self._buf[i:]
             if len(self._buf) < 7:
                 break
             dlc = self._buf[6]
             if dlc > 8:
-                self._buf = self._buf[2:]        # 坏帧：跳过本 'AT' 重找
+                self._buf = self._buf[2:]        # bad frame: skip this 'AT' and re-search
                 continue
             end = 7 + dlc + 2
             if len(self._buf) < end:
@@ -99,4 +99,4 @@ class AtSerialBackend(CanBackend):
                     if cb:
                         cb(cid, d)
             except Exception:
-                log.exception("AT RX 帧处理异常（继续收帧）")
+                log.exception("AT RX frame-processing exception (continuing to receive frames)")

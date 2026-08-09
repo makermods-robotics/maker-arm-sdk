@@ -7,9 +7,9 @@ def test_hierarchy():
 
 
 def test_fault_text():
-    assert errors.fault_text(0) == "无故障"
-    assert "过温" in errors.fault_text(0b000100)
+    assert errors.fault_text(0) == "no fault"
+    assert "overtemperature" in errors.fault_text(0b000100)
     joined = errors.fault_text(0b000011)
-    assert "欠压" in joined and "过流" in joined and "|" in joined
-    assert "bit5" in errors.fault_text(0b100000) or "未标定" in errors.fault_text(0b100000)
-    assert errors.fault_text(1 << 6) == "bit6"   # 越界位也要大声报告，不许空串
+    assert "undervoltage" in joined and "overcurrent" in joined and "|" in joined
+    assert "bit5" in errors.fault_text(0b100000) or "not calibrated" in errors.fault_text(0b100000)
+    assert errors.fault_text(1 << 6) == "bit6"   # out-of-range bits must also be reported loudly, never an empty string

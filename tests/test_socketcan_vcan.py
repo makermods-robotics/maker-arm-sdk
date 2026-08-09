@@ -6,7 +6,7 @@ import pytest
 from maker_arm.transport.socketcan import SocketCanBackend
 
 VCAN_UP = os.path.exists("/sys/class/net/vcan0")
-pytestmark = pytest.mark.skipif(not VCAN_UP, reason="vcan0 不存在（sudo ip link add dev vcan0 type vcan && sudo ip link set up vcan0）")
+pytestmark = pytest.mark.skipif(not VCAN_UP, reason="vcan0 does not exist (sudo ip link add dev vcan0 type vcan && sudo ip link set up vcan0)")
 
 
 def test_loopback_two_sockets():

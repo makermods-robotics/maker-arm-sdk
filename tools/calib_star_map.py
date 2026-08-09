@@ -33,15 +33,17 @@ def read_maker(arm):
 
 
 def validate_anchor_positions(positions, joints, grace=0.1):
-    """锚点防呆：base_rad 必须落在各关节软限位内（小宽限），否则视为坏读数拒绝写盘。
+    """Anchor sanity check: base_rad must fall within each joint's soft limits (small grace
+    margin), otherwise it's treated as a bad reading and writing to disk is refused.
 
-    真机事故：2π 跳变期间采的锚点把 6.36 腌进文件，绝对模式遥操启动即大幅移动。
+    Real-hardware incident: an anchor sampled during a 2π jump baked 6.36 into the file,
+    and absolute-mode teleop lurched violently on startup.
     """
     bad = []
     for pos, j in zip(positions, joints):
         if pos < j.lo - grace or pos > j.hi + grace:
-            bad.append(f"电机{j.motor_id}: base_rad {pos:+.3f} 超出限位 [{j.lo}, {j.hi}]"
-                       "（疑似 2π 跳变，先查零点再标锚）")
+            bad.append(f"motor{j.motor_id}: base_rad {pos:+.3f} out of limits [{j.lo}, {j.hi}]"
+                       " (suspected 2π jump, check the zero point before re-anchoring)")
     return bad
 
 

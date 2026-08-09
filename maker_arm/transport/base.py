@@ -1,6 +1,7 @@
-"""传输层接口：只搬字节，不懂协议。
+"""Transport-layer interface: moves bytes only, no protocol knowledge.
 
-约定：recv 回调必须快进快出（解析+写缓存），不得做控制计算或阻塞 IO。
+Convention: the recv callback must be fast in / fast out (parse + write cache); it must
+not do control computation or blocking IO.
 """
 
 from abc import ABC, abstractmethod
@@ -31,4 +32,4 @@ def create_backend(name: str, **kwargs) -> CanBackend:
     if name == "mock":
         from .mock import MockBackend
         return MockBackend(**kwargs)
-    raise ValueError(f"未知后端: {name!r}（可选 socketcan/at/mock）")
+    raise ValueError(f"unknown backend: {name!r} (choices: socketcan/at/mock)")

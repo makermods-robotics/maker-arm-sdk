@@ -9,7 +9,7 @@ from maker_arm.config import ArmConfig, JointConfig
 from maker_arm.transport.socketcan import SocketCanBackend
 
 VCAN_UP = os.path.exists("/sys/class/net/vcan0")
-pytestmark = pytest.mark.skipif(not VCAN_UP, reason="vcan0 不存在")
+pytestmark = pytest.mark.skipif(not VCAN_UP, reason="vcan0 does not exist")
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def arm(fleet):
 
 def test_end_to_end_teleop_path(arm, fleet):
     arm.connect(timeout=2.0)
-    arm.enable()                       # 真线程 200Hz
+    arm.enable()                       # a real 200Hz thread
     assert arm.set_joint_targets([1.0, -0.5])
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
@@ -52,9 +52,9 @@ def test_end_to_end_teleop_path(arm, fleet):
 def test_watchdog_faults_on_comm_loss(arm, fleet):
     arm.connect(timeout=2.0)
     arm.enable()
-    fleet.paused = True                # 断线
+    fleet.paused = True                # disconnect
     deadline = time.monotonic() + 2.0
     while arm.state is not ArmState.FAULT and time.monotonic() < deadline:
         time.sleep(0.05)
     assert arm.state is ArmState.FAULT
-    assert "超时" in arm.fault_reason
+    assert "timeout" in arm.fault_reason

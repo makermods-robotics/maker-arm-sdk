@@ -1,4 +1,4 @@
-"""vcan 上的假电机群：足够以假乱真地测 Arm 全链路，不含物理模型。"""
+"""A fake motor fleet on vcan: realistic enough to test the full Arm pipeline, no physics model."""
 
 import struct
 
@@ -9,7 +9,7 @@ from maker_arm.transport.socketcan import SocketCanBackend
 class FakeMotorFleet:
     def __init__(self, channel: str, motor_ids: list[int]):
         self._be = SocketCanBackend(channel)
-        self.positions = {mid: 0.0 for mid in motor_ids}   # 电机坐标 rad
+        self.positions = {mid: 0.0 for mid in motor_ids}   # motor coordinates, rad
         self.paused = False
         self._be.set_recv_callback(self._on_frame)
 
@@ -44,7 +44,7 @@ class FakeMotorFleet:
             if idx == p.ParamIndex.RUN_MODE:
                 value = struct.pack("<B3x", 0)
             elif idx == p.ParamIndex.CAN_TIMEOUT:
-                value = struct.pack("<I", 4000)   # 200ms × 20 计数/ms
+                value = struct.pack("<I", 4000)   # 200ms × 20 counts/ms
             else:
                 value = struct.pack("<f", 0.0)
             self._be.send(cid, struct.pack("<H2x", idx) + value)

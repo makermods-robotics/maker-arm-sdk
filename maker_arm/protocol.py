@@ -1,25 +1,27 @@
-"""RobStride RS00 私有 CAN 协议：纯函数编解码，零 IO。
+"""RobStride RS00 private CAN protocol: pure-function encode/decode, zero IO.
 
-字节序约定：运控帧/反馈帧大端；参数读写帧(Type 17/18)小端。
-τ_ff 编码在 29 位 ID 的 Bit23~8，不在 8 字节数据域里。
+Byte-order convention: control frames/feedback frames are big-endian; param read/write
+frames (Type 17/18) are little-endian.
+τ_ff is encoded in Bit23~8 of the 29-bit ID, not in the 8-byte data field.
 """
 
 import struct
 from dataclasses import dataclass
 
-# ── RS00 物理量 ↔ uint16 映射范围（全臂统一） ──
-P_MIN, P_MAX = -12.57, 12.57      # rad（编码范围，与关节限位无关）
+# ── RS00 physical quantity <-> uint16 mapping ranges (unified across the whole arm) ──
+P_MIN, P_MAX = -12.57, 12.57      # rad (encoding range, independent of joint limits)
 V_MIN, V_MAX = -33.0, 33.0        # rad/s
 T_MIN, T_MAX = -14.0, 14.0        # Nm
 KP_MIN, KP_MAX = 0.0, 500.0
-KD_MIN, KD_MAX = 0.0, 5.0         # 协议硬上限
+KD_MIN, KD_MAX = 0.0, 5.0         # protocol hard ceiling
 HOST_CAN_ID = 0xFD
 
 
 @dataclass(frozen=True)
 class MotorParams:
-    """按型号的 uint16 映射范围。帧格式各型号相同，仅范围不同——选错表的症状是
-    力矩/速度读数按错误比例缩放（协议文档明确警告过的坑）。"""
+    """Per-model uint16 mapping ranges. The frame format is identical across models, only
+    the ranges differ -- picking the wrong table shows up as torque/velocity readings
+    scaled by the wrong factor (a pitfall the protocol docs explicitly warn about)."""
     t_min: float
     t_max: float
     v_min: float
@@ -29,12 +31,12 @@ class MotorParams:
 
 
 RS00 = MotorParams(t_min=T_MIN, t_max=T_MAX, v_min=V_MIN, v_max=V_MAX)
-# RS02：±17Nm/±44rad/s（额定 6Nm，减速比 7.75:1）。
-# ⚠️ 固件 ≤0.2.2.11 位置映射为 ±12.5（此处按新固件 ±12.57），bring-up 时查固件版本。
+# RS02: ±17Nm/±44rad/s (rated 6Nm, 7.75:1 reduction ratio).
+# ⚠️ Firmware ≤0.2.2.11 maps position to ±12.5 (here we use ±12.57 for newer firmware) -- check the firmware version during bring-up.
 RS02 = MotorParams(t_min=-17.0, t_max=17.0, v_min=-44.0, v_max=44.0)
 MOTOR_PARAMS = {"RS00": RS00, "RS02": RS02}
 
-# ── 通信类型（29 位 ID 的 Bit28~24） ──
+# ── communication type (29-bit ID Bit28~24) ──
 COMM_GET_ID = 0
 COMM_MIT = 1
 COMM_FEEDBACK = 2
@@ -49,17 +51,17 @@ COMM_SAVE = 22
 COMM_VERSION = 26
 
 
-CAN_TIMEOUT_PER_MS = 20   # canTimeout 单位 50µs/计数（协议：20000=1s）——真机验证过
+CAN_TIMEOUT_PER_MS = 20   # canTimeout unit is 50µs/count (protocol: 20000=1s) -- verified on real hardware
 
 
 class ParamIndex:
-    RUN_MODE = 0x7005      # u8: 0=运控(MIT)
+    RUN_MODE = 0x7005      # u8: 0=control mode (MIT)
     LIMIT_TORQUE = 0x700B  # f32
     LOC_REF = 0x7016       # f32
     LIMIT_SPD = 0x7017     # f32
     MECH_POS = 0x7019      # f32
     VBUS = 0x701C          # f32
-    CAN_TIMEOUT = 0x7028   # u32，单位 50µs/计数（20000=1s，真机已验证）——写入用 CAN_TIMEOUT_PER_MS 换算
+    CAN_TIMEOUT = 0x7028   # u32, unit is 50µs/count (20000=1s, verified on real hardware) -- convert with CAN_TIMEOUT_PER_MS when writing
 
 
 def float_to_u16(x: float, lo: float, hi: float) -> int:
@@ -125,19 +127,19 @@ def encode_save_params(motor_id: int, host_id: int = HOST_CAN_ID) -> tuple[int, 
 @dataclass
 class MotorFeedback:
     motor_id: int
-    position: float      # rad，电机坐标（方向/偏移换算在机械臂层）
+    position: float      # rad, motor coordinates (direction/offset conversion happens at the arm layer)
     velocity: float      # rad/s
     torque: float        # Nm
     temperature: float   # °C
     mode: int            # 0=Reset 1=Cali 2=Motor
-    fault_bits: int      # 6 位故障码，非 0 即故障
+    fault_bits: int      # 6-bit fault code, nonzero means faulted
 
 
 @dataclass
 class ParamReply:
     motor_id: int
     index: int
-    raw: bytes           # data[4:8]，按参数实际类型再解
+    raw: bytes           # data[4:8], decoded per the param's actual type
 
     def value(self, dtype: str = "f"):
         fmt = {"f": "<f", "u8": "<B3x", "u16": "<H2x", "u32": "<I"}[dtype]
@@ -172,27 +174,28 @@ def parse_frame(can_id: int, data: bytes, params: MotorParams = None):
     return None
 
 
-# ── 协议切换与 MIT 互操作（最小子集） ─────────────────────────────
-# 电机通信协议为持久互斥模式（私有=默认/CANopen/MIT），切换后重新上电生效。
+# ── protocol switching and MIT interop (minimal subset) ─────────────────────────────
+# The motor's communication protocol is a persistent, mutually-exclusive mode (private=default/CANopen/MIT); a switch only takes effect after a power cycle.
 COMM_SET_PROTOCOL = 25
 
 
 def encode_set_protocol(motor_id: int, f_cmd: int,
                         host_id: int = HOST_CAN_ID) -> tuple[int, bytes]:
-    """私有协议 Type25：切换电机通信协议（0=私有 1=CANopen 2=MIT）。
+    """Private-protocol Type25: switch the motor's communication protocol (0=private 1=CANopen 2=MIT).
 
-    魔术序列 01..06 必须在 byte0~5（2026-08-07 电机 7 真机实测锚定），
-    F_CMD 在 byte6。应答为 Type0 设备 ID 帧。重新上电生效。
+    The magic sequence 01..06 must be at byte0~5 (anchored by real-hardware testing on
+    motor 7, 2026-08-07); F_CMD is at byte6. The reply is a Type0 device-ID frame. Takes
+    effect after a power cycle.
     """
     return (make_can_id(COMM_SET_PROTOCOL, host_id, motor_id),
             bytes([1, 2, 3, 4, 5, 6, f_cmd & 0xFF, 0]))
 
 
 def mit_switch_protocol_data(f_cmd: int) -> bytes:
-    """MIT 协议指令 8（协议切换）数据域；帧用 11 位标准帧、arbitration_id=电机 id。"""
+    """MIT protocol command 8 (protocol switch) data field; the frame uses an 11-bit standard frame, arbitration_id = motor id."""
     return bytes([0xFF] * 6 + [f_cmd & 0xFF, 0xFD])
 
 
 def mit_fault_query_data() -> bytes:
-    """MIT 协议指令 5（F_CMD=0 读故障状态，无副作用）——用作 MIT 模式探测 ping。"""
+    """MIT protocol command 5 (F_CMD=0 read fault status, no side effects) -- used as an MIT-mode probe ping."""
     return bytes([0xFF] * 6 + [0x00, 0xFB])

@@ -29,7 +29,7 @@ def test_load_good(tmp_path):
 @pytest.mark.parametrize("mutate,msg", [
     (lambda c: c["joints"][0].update(direction=2), "direction"),
     (lambda c: c["joints"][0].update(lo=5.0), "lo"),
-    (lambda c: c["joints"][1].update(motor_id=1), "唯一"),
+    (lambda c: c["joints"][1].update(motor_id=1), "unique"),
     (lambda c: c["joints"][0].update(kd=9.0), "kd"),
     (lambda c: c.update(motor_can_timeout_ms=0), "CAN_TIMEOUT"),
     (lambda c: c.update(limit_margin=-0.5), "limit_margin"),
@@ -43,9 +43,9 @@ def test_validation(tmp_path, mutate, msg):
 
 
 @pytest.mark.parametrize("mutate", [
-    lambda c: c.pop("joints"),                       # 缺 joints
-    lambda c: c.update(unknown_key=1),               # 未知顶层键
-    lambda c: c["joints"][0].update(typo_field=1),   # 关节字段拼错
+    lambda c: c.pop("joints"),                       # missing joints
+    lambda c: c.update(unknown_key=1),               # unknown top-level key
+    lambda c: c["joints"][0].update(typo_field=1),   # misspelled joint field
 ])
 def test_malformed_yaml_raises_valueerror(tmp_path, mutate):
     import copy

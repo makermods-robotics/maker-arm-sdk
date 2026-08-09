@@ -1,4 +1,4 @@
-"""电机层：一个 CAN ID 一个 Motor。指令异步、参数读写同步、反馈缓存带时间戳。"""
+"""Motor layer: one CAN ID = one Motor. Commands are async, param read/write is sync, feedback cache is timestamped."""
 
 import math
 import threading
@@ -18,7 +18,7 @@ class Motor:
         self.motor_id = motor_id
         self._backend = backend
         self._host_id = host_id
-        self.params = params or protocol.RS00   # 型号映射表（T/V 范围按型号不同）
+        self.params = params or protocol.RS00   # model lookup table (T/V range differs by model)
         self._feedback: Optional[MotorFeedback] = None
         self._fb_time: Optional[float] = None
         self._param_lock = threading.Lock()
@@ -27,7 +27,7 @@ class Motor:
         self._param_expect: Optional[int] = None
         self.last_fault_report: Optional[FaultReport] = None
 
-    # ── 反馈缓存（由 Arm 的 RX 分发调用） ──
+    # -- feedback cache (invoked by Arm's RX dispatch) --
     def handle_frame(self, msg) -> None:
         if msg is None or getattr(msg, "motor_id", None) != self.motor_id:
             return
@@ -51,7 +51,7 @@ class Motor:
             return math.inf
         return time.monotonic() - self._fb_time
 
-    # ── 异步指令 ──
+    # -- async commands --
     def enable(self) -> None:
         self._backend.send(*protocol.encode_enable(self.motor_id, self._host_id))
 
@@ -59,9 +59,9 @@ class Motor:
         self._backend.send(*protocol.encode_disable(self.motor_id, clear_fault, self._host_id))
 
     def probe(self) -> None:
-        """发停止帧触发一帧反馈（RobStride 只读探测惯例）。
+        """Send a stop frame to trigger one feedback frame (the RobStride read-only probing convention).
 
-        ⚠️ 对已使能的电机调用会把它停掉（泄力）——仅在电机未使能时使用。
+        ⚠️ Calling this on an already-enabled motor will stop it (release torque) -- only use when the motor is not enabled.
         """
         self.disable()
 
@@ -71,7 +71,7 @@ class Motor:
     def send_mit(self, pos: float, vel: float, kp: float, kd: float, tau: float) -> None:
         self._backend.send(*protocol.encode_mit(self.motor_id, pos, vel, kp, kd, tau, self.params))
 
-    # ── 同步参数读写 ──
+    # -- sync param read/write --
     def read_param(self, index: int, dtype: str = "f", timeout: float = 0.1):
         with self._param_lock:
             self._param_event.clear()
@@ -80,7 +80,7 @@ class Motor:
             try:
                 self._backend.send(*protocol.encode_read_param(self.motor_id, index, self._host_id))
                 if not self._param_event.wait(timeout):
-                    raise ParamTimeout(f"电机 {self.motor_id} 读参数 0x{index:04X} 超时 {timeout}s——查总线/电源/ID")
+                    raise ParamTimeout(f"motor {self.motor_id} read param 0x{index:04X} timed out after {timeout}s -- check bus/power/ID")
                 return self._param_reply.value(dtype)
             finally:
                 self._param_expect = None

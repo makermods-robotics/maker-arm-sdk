@@ -1,8 +1,9 @@
-"""通用 leader→follower 线性关节映射（不依赖具体 leader 硬件）。
+"""Generic leader->follower linear joint mapping (independent of specific leader hardware).
 
-公式：rad_i = base_rad_i + direction_i * scale_i * radians(deg_i - zero_deg_i)
-输入角先做 EMA 平滑（首帧直通）；缺读关节保持上次输出。
-标定：tools/calib_star_map.py 两姿势法生成 JSON。
+Formula: rad_i = base_rad_i + direction_i * scale_i * radians(deg_i - zero_deg_i)
+The input angle is first EMA-smoothed (first frame passes through directly); joints with
+missing readings hold their last output.
+Calibration: tools/calib_star_map.py generates the JSON via the two-pose method.
 """
 
 import json
@@ -23,10 +24,11 @@ class JointMapper:
         return cls(raw["joints"], alpha=raw.get("alpha", 0.3))
 
     def rebase(self, raw_deg: dict[int, float], base_rads: list[float]) -> None:
-        """把锚点重设为当前姿态：zero_deg=当前 leader 角，base_rad=当前 follower 角。
+        """Reset the anchor to the current pose: zero_deg = current leader angle, base_rad = current follower angle.
 
-        跟随变为相对模式（从两边此刻的姿态起步，启动零跳变），免疫锚点过期/
-        多圈计数漂移。缺读或 follower 位置非有限的关节保持原锚不动。
+        Following switches to relative mode (starting from each side's current pose, zero jump
+        at startup), immune to anchor staleness / multi-turn count drift. Joints with missing
+        readings or non-finite follower positions keep their original anchor unchanged.
         """
         for i, j in enumerate(self._joints):
             deg = raw_deg.get(j["servo"])
