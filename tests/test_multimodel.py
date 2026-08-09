@@ -87,8 +87,8 @@ def test_config_model_field(tmp_path):
         ArmConfig.from_yaml(str(f))
 
 
-def test_maker_arm02_config_loads():
-    cfg = ArmConfig.from_yaml("configs/maker_arm02.yaml")
+def test_maker_arm_config_loads():
+    cfg = ArmConfig.from_yaml("configs/maker_arm.yaml")
     assert cfg.n_joints == 7
     assert [j.model for j in cfg.joints] == ["RS00", "RS02", "RS02", "RS00", "RS00", "RS00", "RS00"]
     assert cfg.joints[6].motor_id == 7
