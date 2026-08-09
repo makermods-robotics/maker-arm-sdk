@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""第一课：只读不动。确认通信、角度有数、手推方向符合直觉。"""
+"""Lesson 1: read-only, no motion. Confirm communication, angle readings, and that manual-push direction matches intuition."""
 
 import time
 
@@ -9,7 +9,7 @@ from _args import arm_from_args, make_parser
 def main():
     arm = arm_from_args(make_parser(__doc__).parse_args())
     arm.connect()
-    print("已连接。手推关节观察角度变化，Ctrl-C 退出。")
+    print("connected. Push joints by hand and watch the angles change, Ctrl-C to exit.")
     try:
         while True:
             arm.refresh()

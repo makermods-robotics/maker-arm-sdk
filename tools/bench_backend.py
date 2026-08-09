@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""双后端性能对比：RTT（参数读往返） + 持续吞吐（停止帧探测 @rate）。零运动风险。"""
+"""Dual-backend performance comparison: RTT (param-read round trip) + sustained throughput (stop-frame probe @rate). Zero motion risk."""
 
 import argparse
 import csv
@@ -58,9 +58,9 @@ def main():
         p50 = statistics.median(rtts) if rtts else float("nan")
         p95 = rtts[int(len(rtts) * 0.95)] if rtts else float("nan")
         pmax = rtts[-1] if rtts else float("nan")
-        print(f"RTT ms: p50={p50:.2f} p95={p95:.2f} max={pmax:.2f} (成功 {len(rtts)}/{a.rtt_n})")
+        print(f"RTT ms: p50={p50:.2f} p95={p95:.2f} max={pmax:.2f} (succeeded {len(rtts)}/{a.rtt_n})")
 
-        # ── 持续吞吐：rate Hz × len(ids) 探测帧 ──
+        # ── sustained throughput: rate Hz × len(ids) probe frames ──
         rx_count[0] = 0
         tx = overruns = 0
         dt = 1.0 / a.rate
@@ -79,7 +79,7 @@ def main():
                 next_t = time.perf_counter()
         time.sleep(0.2)
         rx = rx_count[0]
-        print(f"吞吐: tx={tx} rx={rx} rx/tx={rx / max(tx, 1):.3f} tick超时={overruns}")
+        print(f"throughput: tx={tx} rx={rx} rx/tx={rx / max(tx, 1):.3f} tick_overruns={overruns}")
 
         with open(a.csv, "a", newline="") as f:
             w = csv.writer(f)
@@ -88,7 +88,7 @@ def main():
                             "tx", "rx", "rx_ratio", "overruns", "rate", "seconds"])
             w.writerow([a.backend, f"{p50:.3f}", f"{p95:.3f}", f"{pmax:.3f}",
                         tx, rx, f"{rx / max(tx, 1):.4f}", overruns, a.rate, a.seconds])
-        print(f"已追加到 {a.csv}")
+        print(f"appended to {a.csv}")
     finally:
         be.close()
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""扫总线：对 ID 范围逐个发停止帧探测，打印在线电机的位置/温度/故障。"""
+"""Bus scan: send a stop-frame probe to each ID in the range, print position/temperature/fault for motors online."""
 
 import argparse
 import time
@@ -39,9 +39,9 @@ def main():
         be.close()
 
     if not found:
-        print("未发现任何电机——查电源/接线/终端电阻/波特率(1M)")
+        print("no motors found — check power/wiring/termination resistor/baud rate (1M)")
         return
-    print(f"{'ID':>3} {'位置rad':>10} {'温度°C':>8} 故障")
+    print(f"{'ID':>3} {'pos_rad':>10} {'temp_C':>8} fault")
     for mid in sorted(found):
         fb = found[mid]
         print(f"{mid:>3} {fb.position:>10.3f} {fb.temperature:>8.1f} {fault_text(fb.fault_bits)}")

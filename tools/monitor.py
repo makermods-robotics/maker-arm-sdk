@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""只读监视 + 限位采集：CONNECTED 态 10Hz 轮询刷屏（未使能，可安全手推）。
+"""Read-only monitor + limit capture: 10Hz polling display in CONNECTED state (not enabled, safe to move by hand).
 
-手推各关节到两端极限后按 Enter：自动把回退后的 lo/hi 写入 YAML（保留注释，
-写前备份 .bak，写后校验失败自动回滚），并存 configs/limits_capture.json 原始记录。
-Ctrl-C 退出则什么都不写。
+After manually pushing each joint to both end limits, press Enter: automatically writes the
+backed-off lo/hi into the YAML (comments preserved, .bak backup made before writing, auto
+rollback if post-write validation fails), and stores the raw record in
+configs/limits_capture.json.
+Ctrl-C exits without writing anything.
 """
 
 import argparse
@@ -20,11 +22,11 @@ from maker_arm.arm import Arm
 from maker_arm.config import ArmConfig
 from maker_arm.errors import fault_text
 
-MIN_TRAVEL = 0.3  # rad：行程小于此视为该关节没测过，跳过写入
+MIN_TRAVEL = 0.3  # rad: travel below this is treated as "joint never moved", skip writing it
 
 
 def compute_limits(mins, maxs, backoff, min_travel=MIN_TRAVEL):
-    """逐关节返回 (lo, hi) 或 None（无数据/行程不足/回退后区间塌缩）。"""
+    """Per joint, return (lo, hi) or None (no data / insufficient travel / range collapsed after backoff)."""
     out = []
     for lo_raw, hi_raw in zip(mins, maxs):
         if not (math.isfinite(lo_raw) and math.isfinite(hi_raw)):
@@ -39,7 +41,7 @@ def compute_limits(mins, maxs, backoff, min_travel=MIN_TRAVEL):
 
 
 def update_yaml_limits(text: str, per_motor: dict) -> str:
-    """逐行替换 motor_id 对应行内的 lo:/hi: 数值，注释与格式原样保留。"""
+    """Line by line, replace the lo:/hi: values on the line matching motor_id; comments and formatting are left as-is."""
     lines = text.splitlines(keepends=True)
     for i, line in enumerate(lines):
         m = re.search(r"motor_id:\s*(\d+)", line)
@@ -60,12 +62,12 @@ def write_limits(config_path, json_path, mins, maxs, backoff, joints):
                  "min": round(mins[i], 4) if math.isfinite(mins[i]) else None,
                  "max": round(maxs[i], 4) if math.isfinite(maxs[i]) else None}
         if limits[i] is None:
-            entry.update(written=False, reason="无数据或行程不足（未手推到两端？）")
-            print(f"⚠️ J{i + 1} (电机 {j.motor_id}) 跳过：{entry['reason']}")
+            entry.update(written=False, reason="no data or insufficient travel (never pushed to both ends?)")
+            print(f"⚠️ J{i + 1} (motor {j.motor_id}) skipped: {entry['reason']}")
         else:
             per_motor[j.motor_id] = limits[i]
             entry.update(written=True, lo=limits[i][0], hi=limits[i][1])
-            print(f"J{i + 1} (电机 {j.motor_id}): lo={limits[i][0]} hi={limits[i][1]}")
+            print(f"J{i + 1} (motor {j.motor_id}): lo={limits[i][0]} hi={limits[i][1]}")
         record_joints.append(entry)
 
     if per_motor:
@@ -79,16 +81,16 @@ def write_limits(config_path, json_path, mins, maxs, backoff, joints):
             ArmConfig.from_yaml(config_path)
         except Exception as e:
             shutil.copy2(bak, config_path)
-            raise SystemExit(f"写入后校验失败，已从 {bak} 回滚：{e}")
-        print(f"已写入 {config_path}（备份在 {bak}）")
+            raise SystemExit(f"post-write validation failed, rolled back from {bak}: {e}")
+        print(f"written to {config_path} (backup at {bak})")
     else:
-        print("没有任何关节达到写入条件，YAML 未改动")
+        print("no joint met the write condition, YAML unchanged")
 
     with open(json_path, "w") as f:
         json.dump({"timestamp": datetime.now().isoformat(timespec="seconds"),
                    "backoff": backoff, "min_travel": MIN_TRAVEL,
                    "joints": record_joints}, f, ensure_ascii=False, indent=2)
-    print(f"原始记录已存 {json_path}")
+    print(f"raw record stored at {json_path}")
 
 
 def _fmt(x):
@@ -101,7 +103,7 @@ def main():
     ap.add_argument("--backend", choices=["socketcan", "at"], default="socketcan")
     ap.add_argument("--channel", default="can0")
     ap.add_argument("--port", default="/dev/ttyUSB0")
-    ap.add_argument("--backoff", type=float, default=0.05, help="限位回退量 rad")
+    ap.add_argument("--backoff", type=float, default=0.05, help="limit backoff amount, rad")
     ap.add_argument("--json", dest="json_path", default="configs/limits_capture.json")
     a = ap.parse_args()
 
@@ -114,13 +116,13 @@ def main():
     if stdin_ok:
         try:
             import termios
-            termios.tcflush(sys.stdin, termios.TCIFLUSH)   # 清掉残留回车
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)   # flush any leftover Enter keypresses
         except Exception:
             pass
     else:
-        print("⚠️ stdin 不是终端（比如经 conda run 启动）：Enter 写入不可用，只做监视。"
-              "要用限位采集请直接跑: ~/miniconda3/envs/maker-arm/bin/python tools/monitor.py ...")
-    print("已连接（未使能，可安全手推）。")
+        print("⚠️ stdin is not a terminal (e.g. launched via conda run): Enter-to-write is unavailable, monitoring only. "
+              "To use limit capture, run directly: ~/miniconda3/envs/maker-arm/bin/python tools/monitor.py ...")
+    print("connected (not enabled, safe to move by hand).")
     first = True
     try:
         while True:
@@ -132,31 +134,31 @@ def main():
                 if math.isfinite(p):
                     mins[i] = min(mins[i], p)
                     maxs[i] = max(maxs[i], p)
-            rows = [f"电机{arm.config.joints[i].motor_id}: {pos[i]:+7.3f} rad {vel[i]:+6.2f} rad/s "
+            rows = [f"motor {arm.config.joints[i].motor_id}: {pos[i]:+7.3f} rad {vel[i]:+6.2f} rad/s "
                     f"{tmp[i]:5.1f}°C min {_fmt(mins[i])} max {_fmt(maxs[i])} "
-                    f"行程 {maxs[i] - mins[i]:5.3f} {fault_text(flt[i])}"
+                    f"travel {maxs[i] - mins[i]:5.3f} {fault_text(flt[i])}"
                     if math.isfinite(mins[i]) else
-                    f"电机{arm.config.joints[i].motor_id}: 等待数据……"
+                    f"motor {arm.config.joints[i].motor_id}: waiting for data..."
                     for i in range(n)]
-            rows.append("—— 手推到两端（行程 ≥0.3 才会写入）。Enter 写入并退出；Ctrl-C 退出不写。")
+            rows.append("-- push to both ends (travel >=0.3 required to write). Enter to write and exit; Ctrl-C to exit without writing.")
             if first:
                 print("\n".join(rows), flush=True)
                 first = False
             else:
-                # 原地刷新：光标回退 len(rows) 行，逐行擦除重写（不清屏、不刷爆滚动缓冲）
+                # In-place refresh: move cursor back len(rows) lines, erase and rewrite each line (no clear-screen, doesn't flood the scrollback)
                 print(f"\x1b[{len(rows)}F" + "\n".join("\x1b[2K" + r for r in rows), flush=True)
             if stdin_ok and select.select([sys.stdin], [], [], 0)[0]:
                 line = sys.stdin.readline()
                 if line == "":
-                    # stdin 是 EOF（如经 conda run 启动）：select 恒报可读但读到空——
-                    # 不是用户按键，禁用 Enter 功能继续监视，绝不误写入。
+                    # stdin is EOF (e.g. launched via conda run): select always reports readable but reads empty --
+                    # this isn't a real keypress, so disable Enter-to-write and keep monitoring, never write by mistake.
                     stdin_ok = False
                     continue
                 print()
                 write_limits(a.config, a.json_path, mins, maxs, a.backoff, arm.config.joints)
                 break
     except KeyboardInterrupt:
-        print("\n未写入任何文件")
+        print("\nno files written")
     finally:
         arm.disconnect()
 

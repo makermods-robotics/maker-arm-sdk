@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""第三课：单关节小幅正弦跟踪。验证控制循环平滑度。⚠️ 先在台架/空旷处跑。"""
+"""Lesson 3: small-amplitude sine tracking on a single joint. Verifies control-loop smoothness. ⚠️ Run on the bench / in open space first."""
 
 import math
 import time
@@ -11,22 +11,22 @@ def _safe(fn):
     try:
         fn()
     except Exception as e:
-        print(f"清理步骤失败（继续）: {e}")
+        print(f"cleanup step failed (continuing): {e}")
 
 
 def main():
     ap = make_parser(__doc__)
-    ap.add_argument("--joint", type=int, default=6, help="1-based 关节号，默认末端关节")
-    ap.add_argument("--amp", type=float, default=0.2, help="幅值 rad")
-    ap.add_argument("--freq", type=float, default=0.2, help="频率 Hz")
+    ap.add_argument("--joint", type=int, default=6, help="1-based joint number, defaults to the end joint")
+    ap.add_argument("--amp", type=float, default=0.2, help="amplitude, rad")
+    ap.add_argument("--freq", type=float, default=0.2, help="frequency, Hz")
     ap.add_argument("--seconds", type=float, default=20.0)
     a = ap.parse_args()
     arm = arm_from_args(a)
     arm.connect()
     try:
         if not 1 <= a.joint <= arm.config.n_joints:
-            raise SystemExit(f"--joint 必须在 1~{arm.config.n_joints}，得到 {a.joint}")
-        input(f"即将使能并让 J{a.joint} 做 ±{a.amp} rad 正弦。确认后回车 > ")
+            raise SystemExit(f"--joint must be between 1 and {arm.config.n_joints}, got {a.joint}")
+        input(f"about to enable and drive J{a.joint} in a ±{a.amp} rad sine. Confirm and press ENTER > ")
         arm.enable()
         start = arm.get_joint_positions()
         t0 = time.monotonic()
@@ -35,21 +35,21 @@ def main():
             targets = list(start)
             targets[a.joint - 1] = start[a.joint - 1] + a.amp * math.sin(2 * math.pi * a.freq * t)
             arm.set_joint_targets(targets)
-            time.sleep(0.02)   # 50Hz 设目标即可，200Hz 循环负责平滑
+            time.sleep(0.02)   # setting the target at 50Hz is enough; the 200Hz loop handles smoothing
         if arm.state.name == "FAULT":
             print("FAULT:", arm.fault_reason)
     except KeyboardInterrupt:
         pass
     finally:
         if arm.state.name in ("ENABLED", "FAULT"):
-            print("\n🔒 臂保持锁定中——扶稳或摆到安全姿势后按回车泄力（再次 Ctrl-C 也可强制泄力）…")
+            print("\n🔒 arm is holding position -- steady it or move it to a safe pose, then press ENTER to release torque (Ctrl-C again also forces release)...")
             try:
                 input()
             except (EOFError, KeyboardInterrupt):
                 pass
         _safe(arm.disable)
         _safe(arm.disconnect)
-        print("已泄力退出")
+        print("torque released, exiting")
 
 
 if __name__ == "__main__":

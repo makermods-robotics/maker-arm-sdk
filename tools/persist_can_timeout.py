@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""私有协议态：把电机侧 CAN 超时看门狗固化进闪存（默认 200ms→4000 计数）。
+"""Private-protocol state: persist the motor-side CAN timeout watchdog into flash (default 200ms -> 4000 counts).
 
-切到 MIT 协议前必跑一次——MIT 模式没有参数表访问，这是电机断链自动泄力的唯一保障。
+Must run once before switching to the MIT protocol — MIT mode has no parameter-table access,
+so this is the only guarantee that the motor auto-releases torque on a disconnect.
 """
 
 import argparse
@@ -38,17 +39,17 @@ def main():
                 time.sleep(0.05)
                 rb = m.read_param(p.ParamIndex.CAN_TIMEOUT, dtype="u32")
                 if rb != counts:
-                    raise RuntimeError(f"回读 {rb} ≠ {counts}")
+                    raise RuntimeError(f"readback {rb} != {counts}")
                 m.save_params()
                 time.sleep(0.1)
                 ok.append(mid)
-                print(f"电机{mid}: canTimeout={counts} 计数(={a.timeout_ms}ms) 已写入并掉电保存")
+                print(f"motor{mid}: canTimeout={counts} counts (={a.timeout_ms}ms) written and saved to flash")
             except Exception as e:
                 fail.append(mid)
-                print(f"电机{mid}: ❌ {e}")
+                print(f"motor{mid}: ❌ {e}")
     finally:
         be.close()
-    print(f"完成：成功 {ok}，失败 {fail}")
+    print(f"done: succeeded {ok}, failed {fail}")
     raise SystemExit(1 if fail else 0)
 
 

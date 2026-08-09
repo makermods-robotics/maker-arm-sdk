@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""电机通信协议双向切换（私有 ↔ MIT）。切换后必须断电重启才生效。
+"""Bidirectional motor communication protocol switch (private <-> MIT). Requires a power-cycle to take effect.
 
-私有=维护态（maker-arm SDK/工具），MIT=lerobot 运行态（RobstrideMotorsBus）。
-每台电机先探测当前协议再动作；帧格式 2026-08-07 真机实测锚定。仅支持 socketcan。
-⚠️ 探测用的是私有停止帧：对"仍在使能状态"的电机运行本工具会让它泄力——
-确保电机未使能/机械臂已支撑后再运行。
+private = maintenance state (maker-arm SDK/tools), MIT = lerobot runtime state (RobstrideMotorsBus).
+Each motor's current protocol is probed before acting; frame formats anchored by real-hardware
+testing on 2026-08-07. socketcan only.
+⚠️ Probing uses a private stop frame: running this tool on a motor that is "still enabled" will
+release its torque — make sure the motor is disabled / the arm is supported before running.
 """
 
 import argparse
@@ -17,7 +18,7 @@ PROBE_WAIT = 0.3
 
 
 def classify_reply(can_id: int) -> str:
-    """>0x7FF 只可能是 29 位扩展帧（私有协议应答）；否则是 11 位标准帧（MIT 应答）。"""
+    """>0x7FF can only be a 29-bit extended frame (private-protocol reply); otherwise it's an 11-bit standard frame (MIT reply)."""
     return "private" if can_id > 0x7FF else "mit"
 
 
@@ -33,11 +34,12 @@ def mit_alive(replies: list, motor_id: int, host_id: int = p.HOST_CAN_ID) -> boo
 
 
 def switch_acked(replies: list, motor_id: int) -> bool:
-    """切换指令应答判定——白名单：只认三种实测/文档形态（8 字节 MCU 码载荷）。
+    """Switch-command ack detection -- whitelist: only recognize three verified/documented forms (8-byte MCU-code payload).
 
-    实测：私有→MIT 的 Type0 应答 cid=(电机ID<<8)|0xFE（电机7→0x7FE、电机127→0x7FFE，
-    2026-08-07 两次实测）；MIT→私有的指令8应答 cid=电机id；另按 MIT 文档保留
-    "发给主机且 payload[0]=电机id"的形态。其余一律不认。
+    Verified: the private->MIT Type0 reply has cid=(motor ID<<8)|0xFE (motor 7 -> 0x7FE, motor
+    127 -> 0x7FFE, confirmed twice on real hardware on 2026-08-07); the MIT->private command-8
+    reply has cid=motor id; also kept per the MIT docs is the "sent to host with
+    payload[0]=motor id" form. Nothing else is accepted.
     """
     for cid, d in replies:
         if len(d) != 8:
@@ -50,14 +52,14 @@ def switch_acked(replies: list, motor_id: int) -> bool:
 
 
 def detect(be, replies: list, motor_id: int) -> str | None:
-    """探测电机当前协议：分别发私有停止帧与 MIT 只读故障查询，看谁有应答。"""
+    """Probe the motor's current protocol: send a private stop frame and an MIT read-only fault query, see which gets a reply."""
     replies.clear()
-    be.send(*p.encode_disable(motor_id))                          # 私有探测（扩展帧）
+    be.send(*p.encode_disable(motor_id))                          # private probe (extended frame)
     time.sleep(PROBE_WAIT)
     if private_alive(list(replies), motor_id):
         return "private"
     replies.clear()
-    be.send(motor_id, p.mit_fault_query_data(), extended=False)   # MIT 探测（标准帧，无副作用）
+    be.send(motor_id, p.mit_fault_query_data(), extended=False)   # MIT probe (standard frame, no side effects)
     time.sleep(PROBE_WAIT)
     if mit_alive(list(replies), motor_id):
         return "mit"
@@ -68,7 +70,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--channel", default="can0")
-    ap.add_argument("--ids", required=True, help="逗号分隔电机 ID，如 3,4,5,6,7")
+    ap.add_argument("--ids", required=True, help="comma-separated motor IDs, e.g. 3,4,5,6,7")
     ap.add_argument("--to", choices=["mit", "private"], required=True)
     a = ap.parse_args()
     ids = [int(x) for x in a.ids.split(",")]
@@ -83,30 +85,30 @@ def main():
             cur = detect(be, replies, mid)
             if cur is None:
                 failed.append(mid)
-                print(f"电机{mid}: ❌ 两种协议都无应答——查电源/接线/是否已切换未重启")
+                print(f"motor{mid}: ❌ no response on either protocol — check power/wiring/whether it was switched but not power-cycled")
                 continue
             if cur == a.to:
                 skipped.append(mid)
-                print(f"电机{mid}: 已是 {cur}，跳过")
+                print(f"motor{mid}: already {cur}, skipping")
                 continue
             replies.clear()
             if a.to == "mit":
-                be.send(*p.encode_set_protocol(mid, 2))            # 私有 Type25 → MIT
+                be.send(*p.encode_set_protocol(mid, 2))            # private Type25 -> MIT
             else:
-                be.send(mid, p.mit_switch_protocol_data(0), extended=False)  # MIT 指令8 → 私有
+                be.send(mid, p.mit_switch_protocol_data(0), extended=False)  # MIT command 8 -> private
             time.sleep(0.5)
             if switch_acked(list(replies), mid):
                 switched.append(mid)
-                print(f"电机{mid}: {cur} → {a.to} 指令已应答 ✅")
+                print(f"motor{mid}: {cur} -> {a.to} command acked ✅")
             else:
                 failed.append(mid)
-                print(f"电机{mid}: ⚠️ 切换指令无应答——重试或核对协议状态")
+                print(f"motor{mid}: ⚠️ switch command not acked — retry or check the protocol state")
     finally:
         be.close()
-    print(f"\n切换 {switched}，跳过 {skipped}，失败 {failed}")
+    print(f"\nswitched {switched}, skipped {skipped}, failed {failed}")
     if switched:
-        print("⚠️ 重新上电后才生效：请给电机断电重启，然后验证——"
-              f"{'python tools/scan_bus.py（应无应答）' if a.to == 'mit' else 'python tools/scan_bus.py（应全在线）'}")
+        print("⚠️ takes effect only after power-cycling: please power-cycle the motors, then verify --"
+              f"{'python tools/scan_bus.py (expect no response)' if a.to == 'mit' else 'python tools/scan_bus.py (expect all online)'}")
     raise SystemExit(1 if failed else 0)
 
 

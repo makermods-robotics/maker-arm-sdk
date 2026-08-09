@@ -1,5 +1,5 @@
 {
-  "_comment": "servo 0-1（→电机1/2）方向抄 star→metal 表待实测；servo 2-6（→电机3-7）方向为 2026-08-07 台架遥操实证值（metal 表基础上翻转 4/5/6）。zero_deg/base_rad 由标定或 --rebase 启动锚定覆盖",
+  "_comment": "servo 0-1 (-> motor 1/2) direction copied from the star->metal table, pending verification; servo 2-6 (-> motor 3-7) direction is the value verified on the bench teleop on 2026-08-07 (flips 4/5/6 relative to the metal table). zero_deg/base_rad get overwritten by calibration or --rebase startup anchoring",
   "alpha": 0.3,
   "joints": [
     {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""零位标定：把臂手动摆到零位姿态后运行。逐电机设零 + 掉电保存。"""
+"""Zero-position calibration: manually move the arm to the zero pose, then run this. Zeroes each motor and saves to flash."""
 
 import argparse
 import time
@@ -19,18 +19,18 @@ def main():
     arm = Arm.from_yaml(a.config, backend=a.backend, **kw)
     arm.connect()
     try:
-        print("当前电机坐标:", [f"{x:+.3f}" for x in arm.get_joint_positions()])
-        input("确认臂已摆到零位姿态且各电机未使能，回车开始设零（Ctrl-C 取消）> ")
+        print("current motor coordinates:", [f"{x:+.3f}" for x in arm.get_joint_positions()])
+        input("confirm the arm is at the zero pose and no motor is enabled, press ENTER to start zeroing (Ctrl-C to cancel) > ")
         for m in arm.motors:
             m.set_zero()
             time.sleep(0.05)
             m.save_params()
             time.sleep(0.05)
-            print(f"电机 {m.motor_id}: 已设零并保存")
+            print(f"motor {m.motor_id}: zeroed and saved")
         time.sleep(0.2)
         arm.refresh()
         time.sleep(0.2)
-        print("设零后位置（应≈0）:", [f"{x:+.3f}" for x in arm.get_joint_positions()])
+        print("position after zeroing (should be ~0):", [f"{x:+.3f}" for x in arm.get_joint_positions()])
     finally:
         arm.disconnect()
 

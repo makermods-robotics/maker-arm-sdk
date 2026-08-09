@@ -1,15 +1,17 @@
-# maker-arm02：J2/J3 为 RS02（映射 ±17Nm/±44rad/s），其余 RS00。
-# ⚠️ RS02 固件 ≤0.2.2.11 的位置映射为 ±12.5 rad（SDK 按新固件 ±12.57）——
-#    bring-up 第一步先用 READ_VERSION 查固件版本，过旧先升级。
-# direction/offset/lo/hi 为占位：按 README bring-up 序列
-#（monitor 手推核对方向 → set_zero → monitor 按 Enter 采限位）填实。
+# maker-arm02: J2/J3 are RS02 (mapped ±17Nm/±44rad/s), the rest are RS00.
+# ⚠️ RS02 firmware ≤0.2.2.11 maps position to ±12.5 rad (the SDK assumes the newer
+#    firmware's ±12.57) -- as the first bring-up step, check the firmware version with
+#    READ_VERSION and upgrade first if it's too old.
+# direction/offset/lo/hi are placeholders: fill them in per the README bring-up sequence
+# (monitor to verify direction by hand -> set_zero -> monitor, press Enter to capture limits).
 control_rate_hz: 200
-max_velocity: 9.0          # 台架遥操实证值（1.0 跟手肉）
+max_velocity: 9.0          # verified value from bench teleop (1.0 feels sluggish)
 limit_margin: 0.05
 feedback_timeout: 0.2
 motor_can_timeout_ms: 200
-# 3~7 号 kp/kd 为 2026-08-07 台架实证值（抱住/正弦/遥操跟手全通过）；
-# 1~2 号占位，待接线后按同法调。装臂后 J2/J3（RS02）扛负载可能需要加 kp。
+# kp/kd for motors 3~7 are values verified on the bench on 2026-08-07 (hold / sine / teleop
+# tracking all passed); 1~2 are placeholders, tune the same way once wired up. After full
+# assembly J2/J3 (RS02) carrying load may need a higher kp.
 joints:
   - {motor_id: 1, model: RS00, direction: 1, offset: 0.0, lo: -2.864, hi: 2.636, kp: 60, kd: 4.0}
   - {motor_id: 2, model: RS02, direction: 1, offset: 0.0, lo: -2.08, hi: -0.039, kp: 150, kd: 4.5}
@@ -17,4 +19,4 @@ joints:
   - {motor_id: 4, model: RS00, direction: 1, offset: 0.0, lo: -1.648, hi: 1.151, kp: 30, kd: 2.0}
   - {motor_id: 5, model: RS00, direction: 1, offset: 0.0, lo: -1.378, hi: 1.714, kp: 30, kd: 2.0}
   - {motor_id: 6, model: RS00, direction: 1, offset: 0.0, lo: -2.546, hi: 2.791, kp: 30, kd: 2.0}
-  - {motor_id: 7, model: RS00, direction: 1, offset: 0.0, lo: -2.076, hi: -0.039, kp: 20, kd: 0.5}  # 夹爪：MIT 模式，夹持力=kp×位置误差，kp 小=柔性限力
+  - {motor_id: 7, model: RS00, direction: 1, offset: 0.0, lo: -2.076, hi: -0.039, kp: 20, kd: 0.5}  # gripper: MIT mode, grip force = kp x position error, small kp = compliant force limiting
