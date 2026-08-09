@@ -40,6 +40,7 @@ class Arm:
         self._loop_thread: Optional[threading.Thread] = None
         self.fault_reason: Optional[str] = None
         self._mode_bad: dict[int, int] = {}
+        self._wrap: list[float] = [0.0] * config.n_joints   # 会话内 2π 补偿（joint 坐标，connect 时计算）
 
     @classmethod
     def from_yaml(cls, path: str, backend: str = "socketcan", **backend_kwargs) -> "Arm":
@@ -79,6 +80,21 @@ class Arm:
             online = [m.motor_id for m in self.motors if m.feedback is not None]
             self._backend.close()
             raise ConnectError(f"电机 {missing_ids} 无反馈（在线: {online or '无'}）——查接线/终端电阻/电源/ID")
+        # 会话内 2π 补偿：电机重启会把读数搬移 ±2π（多圈计数复位，zero_sta 治不了——
+        # 真机证伪）。装配限位行程 < 一圈，读数带整圈偏移物理上不可能是真实姿态，
+        # 因此把它移回限位区间是无歧义且安全的；补偿对读数和指令双向透明。
+        two_pi = 2 * math.pi
+        self._wrap = [0.0] * self.config.n_joints
+        for i, j in enumerate(self.config.joints):
+            raw = self._to_joint(i, self.motors[i].feedback.position)   # _wrap 已清零 → 原始值
+            if j.lo - self.ENABLE_LIMIT_GRACE <= raw <= j.hi + self.ENABLE_LIMIT_GRACE:
+                continue
+            for k in (-two_pi, two_pi):
+                if j.lo - self.ENABLE_LIMIT_GRACE <= raw + k <= j.hi + self.ENABLE_LIMIT_GRACE:
+                    self._wrap[i] = k
+                    log.warning("电机 %d 读数 %+.3f rad 含 2π 跳变，会话内补偿 %+.3f",
+                                j.motor_id, raw, k)
+                    break
         self._state = ArmState.CONNECTED
         log.info("connected: %d motors online", len(self.motors))
 
@@ -98,11 +114,11 @@ class Arm:
     # ── 坐标换算（方向/偏移只出现在这两个函数） ──
     def _to_motor(self, i: int, joint_pos: float) -> float:
         j = self.config.joints[i]
-        return joint_pos * j.direction + j.offset
+        return (joint_pos - self._wrap[i]) * j.direction + j.offset
 
     def _to_joint(self, i: int, motor_pos: float) -> float:
         j = self.config.joints[i]
-        return (motor_pos - j.offset) * j.direction
+        return (motor_pos - j.offset) * j.direction + self._wrap[i]
 
     # ── 反馈 getter（关节坐标；无反馈 → nan / 0） ──
     def get_joint_positions(self) -> list[float]:

@@ -116,15 +116,21 @@ def test_transient_bad_mode_is_tolerated():
     assert arm.state is ArmState.ENABLED    # 计数已复位，永不误报
 
 
-def test_enable_refuses_position_far_outside_limits():
-    """2π 跳变守门：读数远超软限位时拒绝使能，绝不默默钳位拖着关节走。"""
+def test_enable_refuses_unexplainable_out_of_limit_position():
+    """守门：越限且 ±2π 都解释不了（真异常，非跳变）→ 拒绝使能，绝不默默钳位拖关节。"""
     from maker_arm import protocol as p
+    from maker_arm.config import ArmConfig, JointConfig
     from maker_arm.errors import ConnectError
-    cfg, be = two_joint_cfg(), MockBackend()
-    be.responder = auto_feedback({1: 6.41, 2: 0.0})   # 限位 ±3.0，6.41 = 典型 2π 跳变
+    cfg = ArmConfig(joints=[
+        JointConfig(motor_id=1, direction=1, offset=0.0, lo=-1.0, hi=1.0, kp=30, kd=1.0),
+        JointConfig(motor_id=2, direction=1, offset=0.0, lo=-1.0, hi=1.0, kp=30, kd=1.0),
+    ])
+    be = MockBackend()
+    be.responder = auto_feedback({1: 2.0, 2: 0.0})   # 2.0 与 2.0±2π 都不在 [-1.35,1.35]
     arm = Arm(cfg, be)
     arm.connect(timeout=1.0)
-    with pytest.raises(ConnectError, match="2π"):
+    assert arm._wrap == [0.0, 0.0]                    # 无 2π 解释 → 不补偿
+    with pytest.raises(ConnectError, match="拒绝使能"):
         arm.enable(start_loop=False)
     assert arm.state is ArmState.CONNECTED
     assert not any((cid >> 24) & 0x1F == p.COMM_ENABLE for cid, _ in be.sent)
@@ -137,3 +143,27 @@ def test_enable_allows_small_excursion_within_grace():
     arm.connect(timeout=1.0)
     arm.enable(start_loop=False)
     assert arm.state is ArmState.ENABLED
+
+
+def test_connect_compensates_2pi_wrap_transparently():
+    """会话内 2π 补偿：重启跳变的读数在 connect 时自动修正，读数/指令双向透明。"""
+    import math as _m
+    from maker_arm import protocol as p
+    cfg, be = two_joint_cfg(), MockBackend()
+    be.responder = auto_feedback({1: 0.3 + 2 * _m.pi, 2: 0.0})   # 电机1 物理在 0.3，读数 +2π
+    arm = Arm(cfg, be)
+    arm.connect(timeout=1.0)
+    pos = arm.get_joint_positions()
+    assert pos[0] == pytest.approx(0.3, abs=2e-3)                 # 读数已补偿
+    arm.enable(start_loop=False)                                  # 守门放行（补偿后在限位内）
+    arm.set_joint_targets([0.5, 0.0])
+    for _ in range(200):
+        arm._tick(dt=0.01)
+    mit = [(cid, d) for cid, d in be.sent if (cid >> 24) & 0x1F == p.COMM_MIT and (cid & 0xFF) == 1]
+    sent_pos = p.u16_to_float(int.from_bytes(mit[-1][1][:2], "big"), p.P_MIN, p.P_MAX)
+    assert sent_pos == pytest.approx(0.5 + 2 * _m.pi, abs=5e-3)   # 指令自动加回 +2π（电机坐标）
+
+
+def test_connect_no_compensation_for_sane_readings():
+    arm, be = make_connected_arm()
+    assert arm._wrap == [0.0, 0.0]
