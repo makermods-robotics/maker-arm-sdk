@@ -12,7 +12,7 @@ modprobe slcan
 systemctl stop ModemManager 2>/dev/null || true   # prevent the serial port from being grabbed
 pkill -f "slcand.*${IFACE}" 2>/dev/null || true    # clear any stale instance (re-run after unplug/replug)
 sleep 0.2
-slcand -o -c -s8 "${DEV}" "${IFACE}"               # -s8 = CAN 1 Mbps (RobStride bus rate)
+slcand -o -c -s8 -t hw -S 921600 "${DEV}" "${IFACE}"   # -s8 = 1 Mbps; -t hw -S 921600 = metal-arm proven serial settings (lower latency under 60Hz x 7-motor load)
 sleep 0.2
 ip link set up "${IFACE}"
 ip link set "${IFACE}" txqueuelen 1000
