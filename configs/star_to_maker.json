@@ -4,50 +4,50 @@
   "joints": [
     {
       "servo": 0,
-      "zero_deg": 8.4,
-      "base_rad": -0.0002,
+      "zero_deg": 7.6,
+      "base_rad": -0.0017,
       "direction": 1.0,
       "scale": 1.0
     },
     {
       "servo": 1,
-      "zero_deg": 0.0,
-      "base_rad": 0.004,
+      "zero_deg": -0.1,
+      "base_rad": 0.0052,
       "direction": -1.0,
       "scale": 1.0
     },
     {
       "servo": 2,
-      "zero_deg": -4.1,
-      "base_rad": 0.0428,
+      "zero_deg": -0.7,
+      "base_rad": -0.0052,
       "direction": -1.0,
       "scale": 0.667
     },
     {
       "servo": 3,
-      "zero_deg": 16.7,
-      "base_rad": -0.22,
+      "zero_deg": 1.7,
+      "base_rad": -0.0332,
       "direction": -1.0,
       "scale": 1.0
     },
     {
       "servo": 4,
-      "zero_deg": -0.7,
-      "base_rad": 0.0593,
+      "zero_deg": -7.5,
+      "base_rad": 0.182,
       "direction": -1.0,
       "scale": 1.0
     },
     {
       "servo": 5,
-      "zero_deg": -5.3,
-      "base_rad": 0.2687,
+      "zero_deg": -2.2,
+      "base_rad": 0.1145,
       "direction": 1.0,
       "scale": 1.0
     },
     {
       "servo": 6,
-      "zero_deg": 2.2,
-      "base_rad": -0.0002,
+      "zero_deg": -0.9,
+      "base_rad": -0.0132,
       "direction": -1.0,
       "scale": 1.895
     }

@@ -92,7 +92,7 @@ class Arm:
             for k in (-two_pi, two_pi):
                 if j.lo - self.ENABLE_LIMIT_GRACE <= raw + k <= j.hi + self.ENABLE_LIMIT_GRACE:
                     self._wrap[i] = k
-                    log.warning("电机 %d 读数 %+.3f rad 含 2π 跳变，会话内补偿 %+.3f",
+                    log.info("电机 %d 读数 %+.3f rad 含 2π 跳变，会话内补偿 %+.3f",
                                 j.motor_id, raw, k)
                     break
         self._state = ArmState.CONNECTED
