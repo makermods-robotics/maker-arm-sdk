@@ -114,3 +114,26 @@ def test_transient_bad_mode_is_tolerated():
     for _ in range(10):
         arm._tick(dt=0.005)
     assert arm.state is ArmState.ENABLED    # 计数已复位，永不误报
+
+
+def test_enable_refuses_position_far_outside_limits():
+    """2π 跳变守门：读数远超软限位时拒绝使能，绝不默默钳位拖着关节走。"""
+    from maker_arm import protocol as p
+    from maker_arm.errors import ConnectError
+    cfg, be = two_joint_cfg(), MockBackend()
+    be.responder = auto_feedback({1: 6.41, 2: 0.0})   # 限位 ±3.0，6.41 = 典型 2π 跳变
+    arm = Arm(cfg, be)
+    arm.connect(timeout=1.0)
+    with pytest.raises(ConnectError, match="2π"):
+        arm.enable(start_loop=False)
+    assert arm.state is ArmState.CONNECTED
+    assert not any((cid >> 24) & 0x1F == p.COMM_ENABLE for cid, _ in be.sent)
+
+
+def test_enable_allows_small_excursion_within_grace():
+    cfg, be = two_joint_cfg(), MockBackend()
+    be.responder = auto_feedback({1: 3.2, 2: 0.0})    # 超限 0.2 < 宽限 0.35 → 允许
+    arm = Arm(cfg, be)
+    arm.connect(timeout=1.0)
+    arm.enable(start_loop=False)
+    assert arm.state is ArmState.ENABLED

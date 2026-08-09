@@ -32,6 +32,19 @@ def read_maker(arm):
     return arm.get_joint_positions()
 
 
+def validate_anchor_positions(positions, joints, grace=0.1):
+    """锚点防呆：base_rad 必须落在各关节软限位内（小宽限），否则视为坏读数拒绝写盘。
+
+    真机事故：2π 跳变期间采的锚点把 6.36 腌进文件，绝对模式遥操启动即大幅移动。
+    """
+    bad = []
+    for pos, j in zip(positions, joints):
+        if pos < j.lo - grace or pos > j.hi + grace:
+            bad.append(f"电机{j.motor_id}: base_rad {pos:+.3f} 超出限位 [{j.lo}, {j.hi}]"
+                       "（疑似 2π 跳变，先查零点再标锚）")
+    return bad
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default="configs/maker_arm02.yaml")
@@ -64,6 +77,9 @@ def main():
             missing = [sid for sid in star_ids if sid not in star_z]
             if missing:
                 raise SystemExit(f"servo {missing} 读数不可靠——重摆后重跑")
+            bad = validate_anchor_positions(maker_z, arm.config.joints)
+            if bad:
+                raise SystemExit("锚点越限，拒绝写盘：\n  " + "\n  ".join(bad))
             for i, sid in enumerate(star_ids):
                 by_servo[sid]["zero_deg"] = round(star_z[sid], 3)
                 by_servo[sid]["base_rad"] = round(maker_z[i], 4)

@@ -25,6 +25,7 @@ class ArmState(Enum):
 
 class Arm:
     MODE_FAULT_TICKS = 5   # mode≠2 连续拍数阈值（200Hz 下 25ms）——容忍使能瞬间的陈旧反馈
+    ENABLE_LIMIT_GRACE = 0.35   # rad：使能时允许的越限宽限；超过=疑似 2π 跳变，拒绝使能
     def __init__(self, config: ArmConfig, backend: CanBackend):
         self.config = config
         self._backend = backend
@@ -152,6 +153,14 @@ class Arm:
         pos = self.get_joint_positions()
         if any(math.isnan(x) for x in pos):
             raise ConnectError("使能前读不到全部关节反馈，拒绝使能")
+        # 2π 跳变守门：位置远超软限位时拒绝使能——否则控制循环会默默把关节
+        # 大幅钳回限位（真机事故：J1 每次使能被拽半圈）。宽限内的小越限仍允许（钳回是安全的）。
+        for i, j in enumerate(self.config.joints):
+            if pos[i] < j.lo - self.ENABLE_LIMIT_GRACE or pos[i] > j.hi + self.ENABLE_LIMIT_GRACE:
+                raise ConnectError(
+                    f"电机 {j.motor_id} 当前位置 {pos[i]:+.3f} rad 远超软限位 [{j.lo}, {j.hi}]"
+                    f"（宽限 {self.ENABLE_LIMIT_GRACE}）——疑似 2π 跳变或未标零，拒绝使能。"
+                    "排查: tools/scan_bus.py 看读数；必要时 tools/set_zero.py 重新标零")
         with self._target_lock:
             self._user_targets = list(pos)
         self._internal = list(pos)
