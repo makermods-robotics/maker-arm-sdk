@@ -26,6 +26,7 @@ class ArmConfig:
     limit_margin: float = 0.05         # rad，软限位内缩
     feedback_timeout: float = 0.2      # s，主机侧看门狗
     motor_can_timeout_ms: int = 200    # 电机侧看门狗（禁止 0）
+    hold_on_fault: bool = True         # FAULT 时锁定保持当前姿态（防掉落）；False=立即泄力
     joints: list[JointConfig] = field(default_factory=list)
 
     @property

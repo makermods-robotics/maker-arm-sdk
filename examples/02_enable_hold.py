@@ -31,6 +31,12 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if arm.state.name in ("ENABLED", "FAULT"):
+            print("\n🔒 臂保持锁定中——扶稳或摆到安全姿势后按回车泄力（再次 Ctrl-C 也可强制泄力）…")
+            try:
+                input()
+            except (EOFError, KeyboardInterrupt):
+                pass
         _safe(arm.disable)
         _safe(arm.disconnect)
         print("已泄力退出")

@@ -266,6 +266,8 @@ class Arm:
                 next_t = time.perf_counter()   # 落后了就重置，不追帧
 
     def _check_health(self) -> None:
+        if self._state is not ArmState.ENABLED:
+            return   # 已在 FAULT 锁定保持等状态：不重复判故障
         for m in self.motors:
             if m.feedback_age > self.config.feedback_timeout:
                 self._enter_fault(f"电机 {m.motor_id} 反馈超时 {m.feedback_age:.2f}s——查总线/电源")
@@ -288,6 +290,19 @@ class Arm:
     def _enter_fault(self, reason: str) -> None:
         log.error("FAULT: %s", reason)
         self.fault_reason = reason
+        if self.config.hold_on_fault:
+            # 锁定保持（防掉落）：目标冻结在当前可读位置，控制循环继续发保持帧，
+            # 臂被 kp 锁在原地。打不通/掉出运控态的电机锁不住（由其自身 canTimeout
+            # 泄力），能锁的都锁。解除：disable()/estop()/clear_faults()（均会泄力）。
+            pos = self.get_joint_positions()
+            with self._target_lock:
+                for i, p_ in enumerate(pos):
+                    if math.isfinite(p_):
+                        self._internal[i] = p_
+                        self._user_targets[i] = p_
+            self._state = ArmState.FAULT
+            log.error("hold_on_fault: 已锁定保持当前姿态（循环继续）；disable()/Ctrl-C 泄力解除")
+            return
         self._running = False           # 控制线程随后自然退出
         for m in self.motors:
             try:
