@@ -1,0 +1,47 @@
+{
+  "timestamp": "2026-08-18T18:15:20",
+  "joints": [
+    {
+      "servo": 0,
+      "min_deg": -110.1,
+      "max_deg": 107.2,
+      "travel_deg": 217.3
+    },
+    {
+      "servo": 1,
+      "min_deg": -0.3,
+      "max_deg": 199.8,
+      "travel_deg": 200.1
+    },
+    {
+      "servo": 2,
+      "min_deg": -270.8,
+      "max_deg": 1.4,
+      "travel_deg": 272.2
+    },
+    {
+      "servo": 3,
+      "min_deg": -103.9,
+      "max_deg": 93.2,
+      "travel_deg": 197.1
+    },
+    {
+      "servo": 4,
+      "min_deg": -69.5,
+      "max_deg": 63.2,
+      "travel_deg": 132.7
+    },
+    {
+      "servo": 5,
+      "min_deg": -159.6,
+      "max_deg": 160.2,
+      "travel_deg": 319.8
+    },
+    {
+      "servo": 6,
+      "min_deg": -0.3,
+      "max_deg": 59.0,
+      "travel_deg": 59.3
+    }
+  ]
+}

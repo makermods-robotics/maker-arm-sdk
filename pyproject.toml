@@ -5,12 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maker-arm"
 version = "0.1.0"
-description = "Python SDK for a 6x RobStride RS00 robot arm (teleop-first)"
+description = "Linux and macOS SDK for a 6-DOF RobStride arm plus gripper"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
-dependencies = ["pyserial", "pyyaml"]
+dependencies = ["motorbridge-smart-servo", "pyserial", "pyyaml"]
+classifiers = [
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+maker-arm = "maker_arm.cli.main:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 include = ["maker_arm*"]
+
+[tool.setuptools.package-data]
+"maker_arm.profiles" = ["*.yaml", "*.json"]

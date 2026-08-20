@@ -1,0 +1,22 @@
+# maker-arm02: J2/J3 are RS02 (mapped ±17Nm/±44rad/s), the rest are RS00.
+# ⚠️ RS02 firmware ≤0.2.2.11 maps position to ±12.5 rad (the SDK assumes the newer
+#    firmware's ±12.57) -- as the first bring-up step, check the firmware version with
+#    READ_VERSION and upgrade first if it's too old.
+# Canonical model limits were captured from all seven motors on 2026-08-20. The engineering
+# capture is retained under tools/engineering/calibration/artifacts/maker_arm02; CAN 1 is the base and CAN 7
+# is the gripper. Re-run the README calibration sequence after mechanical or zero changes.
+control_rate_hz: 200
+max_velocity: 5.0          # latest value verified during macOS SLCAN teleop
+limit_margin: 0.0          # limits captured with a 0.05-rad mechanical-stop backoff already applied
+feedback_timeout: 0.2
+motor_can_timeout_ms: 200
+# These gains were exercised together in full seven-motor teleoperation on 2026-08-20.
+# Payload acceptance and production-unit repeatability remain hardware release checks.
+joints:
+  - {motor_id: 1, model: RS00, direction: 1, offset: 0.0, lo: -0.668, hi: 4.818, kp: 60, kd: 4.0}
+  - {motor_id: 2, model: RS02, direction: 1, offset: 0.0, lo: -2.024, hi: 0.979, kp: 150, kd: 4.5}
+  - {motor_id: 3, model: RS02, direction: 1, offset: 0.0, lo: 3.882, hi: 7.955, kp: 90, kd: 3.0}
+  - {motor_id: 4, model: RS00, direction: 1, offset: 0.0, lo: -0.832, hi: 2.122, kp: 30, kd: 2.0}
+  - {motor_id: 5, model: RS00, direction: 1, offset: 0.0, lo: 0.577, hi: 3.641, kp: 30, kd: 2.0}
+  - {motor_id: 6, model: RS00, direction: 1, offset: 0.0, lo: 0.966, hi: 6.292, kp: 30, kd: 2.0}
+  - {motor_id: 7, model: RS00, direction: 1, offset: 0.0, lo: -2.092, hi: -0.039, kp: 20, kd: 0.5}  # gripper: MIT mode, grip force = kp x position error, small kp = compliant force limiting

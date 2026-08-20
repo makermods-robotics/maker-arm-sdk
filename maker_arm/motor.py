@@ -21,6 +21,7 @@ class Motor:
         self.params = params or protocol.RS00   # model lookup table (T/V range differs by model)
         self._feedback: Optional[MotorFeedback] = None
         self._fb_time: Optional[float] = None
+        self._feedback_sequence = 0
         self._param_lock = threading.Lock()
         self._param_event = threading.Event()
         self._param_reply: Optional[ParamReply] = None
@@ -34,6 +35,7 @@ class Motor:
         if isinstance(msg, MotorFeedback):
             self._feedback = msg
             self._fb_time = time.monotonic()
+            self._feedback_sequence += 1
         elif isinstance(msg, ParamReply):
             if msg.index == self._param_expect:
                 self._param_reply = msg
@@ -50,6 +52,11 @@ class Motor:
         if self._fb_time is None:
             return math.inf
         return time.monotonic() - self._fb_time
+
+    @property
+    def feedback_sequence(self) -> int:
+        """Monotonic count used to distinguish a fresh reply from cached feedback."""
+        return self._feedback_sequence
 
     # -- async commands --
     def enable(self) -> None:

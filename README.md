@@ -1,82 +1,127 @@
 # maker-arm
 
-A pure-Python SDK for a self-built RobStride-motor robotic arm (**6 joints + 1 gripper**, the
-gripper is an RS00 @ID7 running as a plain MIT joint 7 — grip force = kp x position error,
-small kp means compliant force limiting). Shares its protocol with EDULITE A3 (RobStride
-private CAN @1Mbps). Supports mixed models per joint: each joint's `model:` field in the YAML
-(RS00/RS02, default RS00) determines its T/V mapping table. The deployed arm uses J2/J3=RS02
-with the rest RS00: `configs/maker_arm.yaml` is the default config for every tool.
-Design doc: `docs/superpowers/specs/2026-08-04-maker-arm-sdk-design.md` in the makermods repo.
+Python SDK and command-line tools for the Maker Arm v1: six RobStride joints plus an RS00
+gripper, teleoperated in absolute coordinates from a Star 102 leader.
+
+Officially supported platforms:
+
+- Linux using SocketCAN.
+- macOS using a serial SLCAN adapter.
+
+The production joint limits, motor models, gains, directions, and Star-to-Maker scale are fixed
+model data shipped in `maker_arm/profiles/`. End users calibrate only motor zero position after
+initial assembly or replacement. Range capture and mapping-generation utilities remain in
+`tools/engineering/` and are not part of the supported user workflow.
 
 ## Install
 
-    conda create -y -n maker-arm python=3.11 && conda run -n maker-arm pip install -e ".[dev]"
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+maker-arm --help
+maker-arm doctor
+```
 
-## Layers
+## Supported commands
 
-transport(socketcan/at/mock) -> protocol(pure functions) -> motor -> arm(state machine + 200Hz control loop) -> tools/examples
+```text
+maker-arm doctor       inspect dependencies, ports, and profiles
+maker-arm scan         find follower motors on CAN
+maker-arm assign-id    assign an ID to one factory/replacement motor
+maker-arm zero         zero one replacement motor or the full arm
+maker-arm check        run a bounded powered response check
+maker-arm teleop       run absolute Star-to-Maker teleoperation
+```
 
-## Quick start (10-line teleop kernel)
+## Linux
 
-    from maker_arm import Arm
-    arm = Arm.from_yaml("configs/maker_arm.yaml", backend="socketcan", channel="can0")
-    arm.connect(); arm.enable()
-    arm.set_joint_targets([0.0]*7)   # rad; the 200Hz loop rate-limits and smooths the approach
-    arm.disable(); arm.disconnect()
+For a serial SLCAN dongle, create `can0` at 1 Mbps:
 
-## First-time setup (run once, in order — don't skip steps)
+```bash
+sudo bash scripts/linux/setup_slcan.sh /dev/ttyACM0 can0
+maker-arm scan --channel can0 --max-id 7
+maker-arm teleop --channel can0 --star-port /dev/ttyUSB0 --max-velocity 5
+```
 
-> ⚠️ For interactive tools (monitor's limit capture, set_zero, examples), run the environment's python directly (e.g. `~/miniconda3/envs/maker-arm/bin/python tools/monitor.py`) — `conda run` doesn't pass through terminal stdin (Enter/Ctrl-C behave oddly), so monitor auto-downgrades to read-only monitoring.
+Native SocketCAN adapters only need a configured `can0`; they do not use the SLCAN setup script.
+See `docs/linux.md`.
 
-1. Bring up the CAN interface: `sudo bash scripts/setup_slcan.sh` (SLCAN dongle -> can0 @1Mbps).
-2. Assign motor CAN IDs (factory default is 127): connect ONE motor at a time and run `python tools/set_can_id.py --current-id 127 --new-id N` (N = 1..7, base to gripper).
-3. `python tools/scan_bus.py` — are all 7 IDs (6 joints + gripper) online?
-4. `python tools/monitor.py` — push each joint by hand, does direction/value make sense? (use this to fill in `direction` in configs; flip direction BEFORE zeroing/limits — it changes the sign of every reading)
-5. `python tools/set_zero.py` — move the arm to its zero pose and zero all motors.
-6. Measure limits: run `python tools/monitor.py` again, push each joint to both end limits by hand while the screen shows min/max/travel live; press **Enter** to automatically write the backed-off lo/hi into `configs/maker_arm.yaml` (comments preserved, `.bak` backup, auto rollback if post-write validation fails), raw record in `configs/limits_capture.json`; joints that were never pushed are skipped with a warning. Ctrl-C exits without writing.
-7. `python examples/02_enable_hold.py` — first powered hold; tune kp/kd (sagging = raise kp, buzzing = lower kp / raise kd).
+## macOS
 
-> Note: the mode!=2 health check has a 25ms persistence tolerance (5 consecutive ticks before it's flagged as a fault), so the stale-feedback race at the instant of enabling won't false-trigger; if it still reports "abnormal mode" it genuinely never entered motion-control state — check that motor's enable acknowledgment.
+Locate the follower CANable and Star leader ports:
 
-8. Teleop calibration: full two-pose `python tools/calib_star_map.py --star-port /dev/ttyUSBx`, or `--anchor-only` (both arms at their zero poses) if direction/scale are already set in `configs/star_to_maker.json`.
+```bash
+ls /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null
+maker-arm scan --backend slcan --port /dev/cu.usbmodem-FOLLOWER --max-id 7
+maker-arm teleop \
+  --backend slcan \
+  --port /dev/cu.usbmodem-FOLLOWER \
+  --star-port /dev/cu.usbserial-LEADER \
+  --max-velocity 5 \
+  --record-motor-states
+```
 
-## Normal use (daily)
+Serial SLCAN defaults to the verified 25 Hz control/update rate and waits for fresh feedback
+from each motor before commanding the next. This is required by older
+`normaldotcom/canable-fw`, whose unbuffered USB path can otherwise hide motors 4–7.
+See `docs/macos.md`.
 
-1. If `can0` is missing (fresh boot, or the dongle was replugged): `sudo bash scripts/setup_slcan.sh`
-2. Teleop: `~/miniconda3/envs/maker-arm/bin/python examples/04_teleop_star.py --star-port /dev/ttyUSB0`
-   - Absolute-anchor mode by default: the follower moves (rate-limited, confirmation prompt if the pose gap exceeds 0.8 rad) to the pose matching the leader, then tracks. Add `--rebase` for relative mode (anchor to the current poses, zero motion at start).
-   - Ctrl-C to stop: the arm **stays locked** until you press Enter (support it or park it first), then torque is released.
-3. That's it. No re-zeroing or re-calibration needed day to day:
-   - Motor reboots that shift readings by ±2π are detected and compensated automatically at connect (info log).
-   - Re-run anchor calibration (step 8 above) only if you re-zero the motors or move the leader's zero convention.
+## Motor replacement and zero calibration
 
-## SLCAN dongle (same CANable-class adapter as the metal arm)
+Connect only the unassigned replacement motor while changing its ID:
 
-Plug in and bring it up as can0 with one command; the SDK uses the default socketcan backend, zero code changes:
+```bash
+maker-arm assign-id --backend slcan --port /dev/cu.usbmodem-FOLLOWER \
+  --current-id 127 --new-id 4
+```
 
-    sudo bash scripts/setup_slcan.sh
+Install the motor, place that joint in the Maker Arm v1 documented zero pose, then run:
 
-(defaults to /dev/ttyACM0 -> can0 @1Mbps; just rerun after unplugging/replugging. The serial port name / interface name can be passed as arguments.)
+```bash
+maker-arm zero --backend slcan --port /dev/cu.usbmodem-FOLLOWER --motor 4
+maker-arm check --backend slcan --port /dev/cu.usbmodem-FOLLOWER --motor 4
+```
 
-## Dual-backend comparison
+Use `maker-arm zero --all` only for factory assembly or a deliberate complete re-zero. Zeroing
+does not rewrite model limits or Star mapping. The exact mechanical zero fixture/pose must be
+documented and validated before the first public hardware release; see
+`docs/zero-calibration.md`.
 
-    python tools/bench_backend.py --backend socketcan --channel can0
-    python tools/bench_backend.py --backend at --port /dev/ttyUSB0
+## Safety
 
-## Safety design
+- Enabling begins from fresh measured positions and approaches targets through a velocity limit.
+- Fixed soft limits are enforced in absolute joint coordinates.
+- A host feedback watchdog, motor fault checks, and the motor-side CAN watchdog remain active.
+- Ctrl-C stops leader following and holds the latest measured pose.
+- The supported powered commands require the operator to type `RELEASE` before intentionally
+  releasing torque. Forced process termination or loss of CAN/power can still trigger the
+  motor-side watchdog and drop an unsupported arm.
+- Always support the arm and payload before enable, fault recovery, or torque release.
 
-- On enable, the target is set to the current position (first-frame protection); the target can only approach at a max_velocity rate limit (prevents runaway motion). Enable refuses out-of-limit positions that no ±2π shift explains.
-- Soft limits inset by limit_margin; host-side watchdog (feedback timeout) and per-motor fault/mode checks trigger FAULT; with `hold_on_fault: true` (default) FAULT **locks the joints at the current pose** instead of letting the arm drop — motors that can't be reached release themselves via the motor-side CAN_TIMEOUT=200ms watchdog (which also covers host crashes). `estop()` always releases torque.
-- Fault codes are translated and reported loudly, never silently dropped; ±2π reading jumps after motor reboots are compensated per session at connect.
+Read `docs/safety.md` before powered operation.
 
-## Offline tests
+## Telemetry and stall detection
 
-    conda run -n maker-arm pytest -q                          # protocol/transport/motor/arm unit tests
-    sudo modprobe vcan && sudo ip link add dev vcan0 type vcan; sudo ip link set up vcan0
-    conda run -n maker-arm pytest tests/test_vcan_integration.py -q   # full chain, no hardware needed
+Add `--record-motor-states` to teleoperation to create a CSV plus summary JSON under `logs/`.
+The recorder captures targets, rate-limited commands, position error, velocity, measured torque,
+temperature, mode, faults, and feedback age for all seven motors. A confirmed persistent stall
+freezes leader following and leaves the arm holding until the operator types `RELEASE`.
 
-## lerobot teleop
+## Engineering and experimental tools
 
-For integrating with lerobot (RobStride MIT protocol + the upstream RobstrideMotorsBus) see
-`docs/LEROBOT_BRINGUP.md`; the protocol-switch tool is `tools/switch_protocol.py`, and the
-watchdog-persistence tool is `tools/persist_can_timeout.py`.
+- `tools/diagnostics/`: read-only inspection, backend benchmarking, and bounded motor diagnosis.
+- `tools/engineering/calibration/`: factory range capture and mapping work; these can overwrite
+  production calibration and are intentionally not installed as public commands.
+- `tools/experimental/lerobot/`: unsupported protocol-switching experiments.
+
+See `tools/README.md` and `docs/engineering-tools.md`.
+
+## Development
+
+```bash
+python -m pytest -q
+```
+
+Linux vcan integration tests run when a `vcan0` interface is available. CI covers Linux and
+macOS; hardware acceptance remains a separate operator-run step.

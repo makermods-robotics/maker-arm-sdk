@@ -1,7 +1,11 @@
 __pycache__/
+.DS_Store
+.venv/
+build/
+dist/
 *.egg-info/
 .pytest_cache/
 bench_results*.csv
-configs/limits_capture.json
+logs/
 configs/*.bak
 configs/bench_*.yaml

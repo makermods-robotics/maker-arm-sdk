@@ -26,10 +26,10 @@ def create_backend(name: str, **kwargs) -> CanBackend:
     if name == "socketcan":
         from .socketcan import SocketCanBackend
         return SocketCanBackend(**kwargs)
-    if name == "at":
-        from .at_serial import AtSerialBackend
-        return AtSerialBackend(**kwargs)
+    if name == "slcan":
+        from .slcan_serial import SlcanSerialBackend
+        return SlcanSerialBackend(**kwargs)
     if name == "mock":
         from .mock import MockBackend
         return MockBackend(**kwargs)
-    raise ValueError(f"unknown backend: {name!r} (choices: socketcan/at/mock)")
+    raise ValueError(f"unknown backend: {name!r} (choices: socketcan/slcan/mock)")

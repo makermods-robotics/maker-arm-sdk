@@ -4,7 +4,8 @@
 import math
 import time
 
-from _args import arm_from_args, make_parser
+from maker_arm.cli.common import arm_from_args, make_parser
+from maker_arm.cli.safety import release_if_holding, require_interactive_terminal
 
 
 def _safe(fn):
@@ -21,6 +22,7 @@ def main():
     ap.add_argument("--freq", type=float, default=0.2, help="frequency, Hz")
     ap.add_argument("--seconds", type=float, default=20.0)
     a = ap.parse_args()
+    require_interactive_terminal("powered sine test")
     arm = arm_from_args(a)
     arm.connect()
     try:
@@ -41,15 +43,13 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        if arm.state.name in ("ENABLED", "FAULT"):
-            print("\n🔒 arm is holding position -- steady it or move it to a safe pose, then press ENTER to release torque (Ctrl-C again also forces release)...")
-            try:
-                input()
-            except (EOFError, KeyboardInterrupt):
-                pass
-        _safe(arm.disable)
+        torque_was_enabled = arm.state.name in ("ENABLED", "FAULT")
+        _safe(lambda: release_if_holding(arm))
         _safe(arm.disconnect)
-        print("torque released, exiting")
+        if torque_was_enabled:
+            print("torque released, exiting")
+        else:
+            print("torque was not enabled; transport closed without sending disable")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,55 @@
+{
+  "_comment": "Fixed absolute Star-to-Maker v1 model mapping. Factory engineering captures are retained under tools/engineering/calibration/artifacts/maker_arm02.",
+  "alpha": 0.3,
+  "joints": [
+    {
+      "servo": 0,
+      "zero_deg": -110.1,
+      "base_rad": -0.668,
+      "direction": 1.0,
+      "scale": 1.446501
+    },
+    {
+      "servo": 1,
+      "zero_deg": -0.3,
+      "base_rad": 0.979,
+      "direction": -1.0,
+      "scale": 0.859866
+    },
+    {
+      "servo": 2,
+      "zero_deg": -270.8,
+      "base_rad": 7.955,
+      "direction": -1.0,
+      "scale": 0.857332
+    },
+    {
+      "servo": 3,
+      "zero_deg": -103.9,
+      "base_rad": 2.122,
+      "direction": -1.0,
+      "scale": 0.85871
+    },
+    {
+      "servo": 4,
+      "zero_deg": -69.5,
+      "base_rad": 3.641,
+      "direction": -1.0,
+      "scale": 1.322941
+    },
+    {
+      "servo": 5,
+      "zero_deg": -159.6,
+      "base_rad": 0.966,
+      "direction": 1.0,
+      "scale": 0.954213
+    },
+    {
+      "servo": 6,
+      "zero_deg": -0.3,
+      "base_rad": -0.039,
+      "direction": -1.0,
+      "scale": 1.983613
+    }
+  ]
+}

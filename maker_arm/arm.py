@@ -73,8 +73,16 @@ class Arm:
             if not missing:
                 break
             for m in missing:
+                sequence = m.feedback_sequence
                 m.probe()
-            time.sleep(0.05)
+                # Probe sequentially and wait for this motor's reply before sending the
+                # next request. Small USB-SLCAN firmware queues otherwise return only the
+                # first few motors from a burst even though the whole bus is healthy.
+                probe_deadline = min(deadline, time.monotonic() + 0.05)
+                while m.feedback_sequence == sequence and time.monotonic() < probe_deadline:
+                    time.sleep(0.001)
+                if time.monotonic() >= deadline:
+                    break
         missing_ids = [m.motor_id for m in self.motors if m.feedback is None]
         if missing_ids:
             online = [m.motor_id for m in self.motors if m.feedback is not None]
@@ -106,12 +114,30 @@ class Arm:
         self._backend.close()
         self._state = ArmState.DISCONNECTED
 
-    def refresh(self) -> None:
-        """Poll feedback while not in ENABLED state (probe=stop frame; do not call while enabled)."""
+    def refresh(self, wait: bool = False, timeout: float = 0.05) -> Optional[list[bool]]:
+        """Poll feedback while not enabled.
+
+        The default remains non-blocking for existing callers. ``wait=True`` probes one motor
+        at a time and verifies a new feedback sequence before probing the next. This avoids
+        accepting stale cached values when small USB-SLCAN queues drop burst replies.
+        """
         if self._state is ArmState.ENABLED:
-            return
+            return [False] * len(self.motors) if wait else None
+        if timeout <= 0:
+            raise ValueError("refresh timeout must be positive")
+        if not wait:
+            for m in self.motors:
+                m.probe()
+            return None
+        fresh = []
         for m in self.motors:
+            sequence = m.feedback_sequence
             m.probe()
+            deadline = time.monotonic() + timeout
+            while m.feedback_sequence == sequence and time.monotonic() < deadline:
+                time.sleep(0.001)
+            fresh.append(m.feedback_sequence != sequence)
+        return fresh
 
     # ── coordinate conversion (direction/offset only appear in these two functions) ──
     def _to_motor(self, i: int, joint_pos: float) -> float:
@@ -150,42 +176,57 @@ class Arm:
         for m in self.motors:
             m.write_param(protocol.ParamIndex.RUN_MODE, 0, "u8")          # 0=control mode (MIT)
             m.write_param(protocol.ParamIndex.CAN_TIMEOUT, timeout_counts, "u32")  # motor-side watchdog
+            time.sleep(0.005)  # keep small SLCAN firmware TX queues from being burst-filled
         # Read-back verification: confirm the motor actually accepted the RUN_MODE / CAN_TIMEOUT settings
         for m in self.motors:
-            try:
-                run_mode = m.read_param(protocol.ParamIndex.RUN_MODE, dtype="u8")
-                if run_mode != 0:
-                    raise ConnectError(f"motor {m.motor_id} RUN_MODE read-back {run_mode} != 0 (control mode not in effect)")
-                rb = m.read_param(protocol.ParamIndex.CAN_TIMEOUT, dtype="u32")
-                if rb != timeout_counts:
-                    log.warning("motor %d CAN_TIMEOUT read-back %s != expected %d (=%dms×20)",
-                                m.motor_id, rb, timeout_counts, self.config.motor_can_timeout_ms)
-            except ParamTimeout as e:
-                raise ConnectError(f"param read-back before enable failed: {e}") from e
-        # First-frame protection: target = current actual position (probe refreshes feedback, retry up to 10 times)
-        for _ in range(10):
-            self.refresh()
-            time.sleep(0.02)
-            if all(m.feedback_age < 0.5 for m in self.motors):
-                break
+            values = []
+            for index, dtype in (
+                (protocol.ParamIndex.RUN_MODE, "u8"),
+                (protocol.ParamIndex.CAN_TIMEOUT, "u32"),
+            ):
+                last_error = None
+                for attempt in range(5):
+                    try:
+                        values.append(m.read_param(index, dtype=dtype, timeout=0.2))
+                        break
+                    except ParamTimeout as e:
+                        last_error = e
+                        if attempt < 4:
+                            time.sleep(0.02)
+                else:
+                    raise ConnectError(f"param read-back before enable failed after 5 attempts: {last_error}") from last_error
+            run_mode, rb = values
+            if run_mode != 0:
+                raise ConnectError(f"motor {m.motor_id} RUN_MODE read-back {run_mode} != 0 (control mode not in effect)")
+            if rb != timeout_counts:
+                log.warning("motor %d CAN_TIMEOUT read-back %s != expected %d (=%dms×20)",
+                            m.motor_id, rb, timeout_counts, self.config.motor_can_timeout_ms)
+        # First-frame protection: target = a fresh current position from every motor.
+        # Sequential probing avoids mistaking plausible cached SLCAN data for a new reply.
+        fresh = self.refresh(wait=True, timeout=0.05)
+        if not all(fresh):
+            stale = [self.motors[i].motor_id for i, ok in enumerate(fresh) if not ok]
+            raise ConnectError(
+                f"could not obtain fresh feedback for CAN motors {stale} before enable, refusing to enable"
+            )
         pos = self.get_joint_positions()
         if any(math.isnan(x) for x in pos):
             raise ConnectError("could not read feedback for all joints before enable, refusing to enable")
-        # 2π jump gate: refuse to enable when the position is far outside the soft limits --
-        # otherwise the control loop would silently clamp the joint hard back to the limit
-        # (real-hardware incident: J1 got yanked half a turn on every enable). Small over-limit
-        # excursions within the grace margin are still allowed (clamping back is safe).
+        # Absolute-coordinate safety gate: a current position far outside the calibrated
+        # mechanical envelope indicates a bad zero or unexplained encoder wrap. Never shift
+        # the envelope to accommodate it; refuse to enable instead.
         for i, j in enumerate(self.config.joints):
             if pos[i] < j.lo - self.ENABLE_LIMIT_GRACE or pos[i] > j.hi + self.ENABLE_LIMIT_GRACE:
                 raise ConnectError(
                     f"motor {j.motor_id} current position {pos[i]:+.3f} rad far exceeds soft limits [{j.lo}, {j.hi}]"
                     f"(grace {self.ENABLE_LIMIT_GRACE}) -- suspected 2π jump or uncalibrated zero, refusing to enable. "
-                    "Troubleshoot: tools/scan_bus.py to check readings; if needed, tools/set_zero.py to re-zero")
+                    "Troubleshoot with 'maker-arm scan'; if a replacement motor needs a new reference, use 'maker-arm zero'")
         with self._target_lock:
             self._user_targets = list(pos)
         self._internal = list(pos)
         for m in self.motors:
             m.enable()
+            time.sleep(0.005)  # avoid burst-filling small USB-SLCAN firmware TX queues
         self._state = ArmState.ENABLED
         self.fault_reason = None
         self._mode_bad.clear()
@@ -196,6 +237,8 @@ class Arm:
             self._loop_thread.start()
 
     def disable(self) -> None:
+        if self._state is ArmState.DISCONNECTED:
+            return
         self._running = False
         if self._loop_thread and threading.current_thread() is not self._loop_thread:
             self._loop_thread.join(timeout=1.0)
@@ -233,6 +276,23 @@ class Arm:
             self._user_targets = list(targets)
         return True
 
+    def get_commanded_positions(self) -> list[float]:
+        """Return the rate-limited joint command currently sent by the control loop."""
+        with self._target_lock:
+            return list(self._internal)
+
+    def hold_current_position(self) -> bool:
+        """Freeze the enabled arm at its latest measured pose without releasing torque."""
+        if self._state is not ArmState.ENABLED:
+            return False
+        positions = self.get_joint_positions()
+        if not all(math.isfinite(position) for position in positions):
+            return False
+        with self._target_lock:
+            self._user_targets = list(positions)
+            self._internal = list(positions)
+        return True
+
     # ── control loop ──
     @staticmethod
     def _busy_wait_us(us: float) -> None:
@@ -243,14 +303,30 @@ class Arm:
     def _tick(self, dt: float) -> None:
         with self._target_lock:
             user = list(self._user_targets)
-        maxstep = self.config.max_velocity * dt
+            maxstep = self.config.max_velocity * dt
+            for i, j in enumerate(self.config.joints):
+                lo, hi = j.lo + self.config.limit_margin, j.hi - self.config.limit_margin
+                goal = min(hi, max(lo, user[i]))
+                step = min(maxstep, max(-maxstep, goal - self._internal[i]))
+                self._internal[i] += step
+            commands = list(self._internal)
         for i, j in enumerate(self.config.joints):
-            lo, hi = j.lo + self.config.limit_margin, j.hi - self.config.limit_margin
-            goal = min(hi, max(lo, user[i]))
-            step = min(maxstep, max(-maxstep, goal - self._internal[i]))
-            self._internal[i] += step
-            self.motors[i].send_mit(self._to_motor(i, self._internal[i]), 0.0, j.kp, j.kd, 0.0)
-            self._busy_wait_us(150)   # space out frame intervals to prevent bus congestion
+            motor = self.motors[i]
+            sequence = motor.feedback_sequence
+            motor.send_mit(self._to_motor(i, commands[i]), 0.0, j.kp, j.kd, 0.0)
+            if getattr(self._backend, "feedback_paced_control", False):
+                # Old USB-SLCAN firmware has no outbound USB queue. Waiting for
+                # this reply before commanding the next motor bounds both its
+                # CAN TX queue and three-frame CAN RX FIFO. A timeout does not
+                # stop the remaining motors from receiving their commands; the
+                # normal feedback watchdog below still makes the safety decision.
+                deadline = time.monotonic() + getattr(
+                    self._backend, "feedback_wait_timeout", 0.015
+                )
+                while motor.feedback_sequence == sequence and time.monotonic() < deadline:
+                    time.sleep(0.0005)
+            else:
+                self._busy_wait_us(150)   # space out frame intervals to prevent bus congestion
         self._check_health()
 
     def _control_loop(self) -> None:

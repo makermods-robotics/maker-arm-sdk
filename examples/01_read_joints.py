@@ -3,7 +3,7 @@
 
 import time
 
-from _args import arm_from_args, make_parser
+from maker_arm.cli.common import arm_from_args, make_parser
 
 
 def main():
