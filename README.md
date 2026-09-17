@@ -47,6 +47,18 @@ maker-arm teleop --channel can0 --star-port /dev/ttyUSB0 --max-velocity 5
 Native SocketCAN adapters only need a configured `can0`; they do not use the SLCAN setup script.
 See `docs/linux.md`.
 
+# Quick Start with Drift in Linux
+
+You can easily start working with the Maker arm using [Drift](https://godrift.ai) — an agentic simulation platform for robotics.
+
+Paste this in your terminal and run to install Drift:
+
+```bash
+curl -fsSL https://godrift.ai/install | bash
+```
+
+From the `/robots` command in the Drift CLI, you can easily preview the Maker arm and add it to your workspace.
+
 ## macOS
 
 Locate the follower CANable and Star leader ports:
