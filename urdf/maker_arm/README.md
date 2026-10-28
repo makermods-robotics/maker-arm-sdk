@@ -22,14 +22,13 @@ validated for RL dynamics**:
 
 - Jaw opening and equal travel are user-provided measurements. Intermediate
   motor-angle-to-gap behavior has not been calibrated.
-- Moving-jaw mass and inertia are redistributed from the original CAD density
-  estimate. The original total mass, center of mass, and inertia are preserved
-  at the closed pose; these are not measured physical properties.
+- Forearm and wrist inertials and joint friction are fitted to real-arm motion,
+  not measured. The per-jaw mass split is a CAD estimate.
 - Gripper effort **20 N** and velocity **0.1 m/s** are placeholders.
 - The six arm joints retain the designer's axes, origins, and limits. Their
   physical zero alignment and actuator limits still require validation.
 - Collision meshes need validation/decomposition in the target simulator.
-  Friction, backlash, and self-collision exclusions remain unverified.
+  Contact friction, backlash, and self-collision exclusions remain unverified.
 - The designer export omitted `part_003`; its identity remains unresolved.
 
 [`revision_report.json`](revision_report.json) records source provenance, mesh
