@@ -31,13 +31,20 @@ def wait_for_release() -> None:
 
 
 def release_if_holding(arm) -> bool:
-    """Ask before disabling only when this process actually enabled/holds the arm.
+    """Return to rest and release torque, as MakerModsLab's stop path does.
 
-    A connection or pre-enable validation failure must close the transport without
-    broadcasting a disable command to motors that may be held by another controller.
+    Only acts when this process actually enabled/holds the arm: a connection or pre-enable
+    failure closes the transport without sending anything to motors another controller may
+    hold. If the return to rest cannot be verified, the arm keeps holding until the operator
+    types RELEASE.
     """
     if arm.state.name not in ("ENABLED", "FAULT"):
         return False
+    print("returning to the rest pose...")
+    if arm.stop():
+        print("rest pose reached; torque released")
+        return True
+    print("could not verify the return to rest; the arm is holding its pose")
     wait_for_release()
     arm.disable()
     return True

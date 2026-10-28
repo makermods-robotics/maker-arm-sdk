@@ -1,79 +1,86 @@
-import math
-import struct
-
 import pytest
 
-from conftest import feedback_frame
+from fakes import FakeBus, FakeMotor
 from maker_arm import protocol as p
-from maker_arm.errors import ParamTimeout
+from maker_arm.errors import FaultLatched, ParamTimeout
 from maker_arm.motor import Motor
-from maker_arm.transport.mock import MockBackend
 
 
-def make_motor(mid=1):
-    be = MockBackend()
-    m = Motor(mid, be)
-    be.set_recv_callback(lambda cid, d: (msg := p.parse_frame(cid, d)) and m.handle_frame(msg))
-    be.open()
-    return m, be
+def wired(fake: FakeMotor) -> tuple[Motor, FakeBus]:
+    bus = FakeBus([fake])
+    motor = Motor(fake.motor_id, bus, fake.params)
+    bus.set_recv_callback(lambda cid, d: motor.handle_frame(p.parse_frame(cid, d, motor.params)))
+    return motor, bus
 
 
-def test_commands_produce_expected_frames():
-    m, be = make_motor(1)
-    m.enable(); m.disable(); m.probe(); m.set_zero()
-    m.send_mit(0.0, 0.0, 10.0, 1.0, 0.0)
-    cids = [cid for cid, _ in be.sent]
-    assert cids == [0x0300FD01, 0x0400FD01, 0x0400FD01, 0x0600FD01, 0x01800001]
+def test_every_command_is_a_standard_frame():
+    motor, bus = wired(FakeMotor(1))
+    motor.enable()
+    motor.send_command(0.1, 0, 10, 1, 0)
+    motor.disable()
+    assert bus.sent_extended == [False, False, False]
 
 
-def test_feedback_cache_and_age():
-    m, be = make_motor(2)
-    assert m.feedback is None and m.feedback_age == math.inf
-    assert m.feedback_sequence == 0
-    be.inject(*feedback_frame(2, pos=1.0, temp=42.0))
-    assert m.feedback.position == pytest.approx(1.0, abs=1e-3)
-    assert m.feedback.temperature == pytest.approx(42.0)
-    assert m.feedback_age < 0.1
-    assert m.feedback_sequence == 1
+def test_read_state_returns_fresh_feedback_without_changing_torque():
+    fake = FakeMotor(3, position=0.7, enabled=True)
+    motor, _ = wired(fake)
+    fb = motor.read_state()
+    assert fb.position == pytest.approx(0.7, abs=1e-3)
+    assert fake.enabled
 
 
-def test_feedback_ignores_other_motor():
-    m, be = make_motor(2)
-    be.inject(*feedback_frame(2, pos=1.0))
-    m2_only = m.feedback.position
-    # Frames for other motors are dispatched by Arm; Motor.handle_frame assumes it only
-    # receives its own messages -- verify here that handle_frame simply ignores a
-    # message whose motor_id does not match (defensive check)
-    m.handle_frame(p.parse_frame(*feedback_frame(3, pos=2.0)))
-    assert m.feedback.position == m2_only
+def test_fault_query_does_not_clear_and_latches():
+    fake = FakeMotor(2, fault_word=1 << 2)
+    motor, _ = wired(fake)
+    status = motor.query_fault()
+    assert status.has_fault and fake.fault_word == 1 << 2
+    assert "undervoltage" in motor.fault_latched
+    with pytest.raises(FaultLatched):
+        motor.request_state()
+    assert "clear" not in fake.log
 
 
-def test_read_param_sync_roundtrip():
-    m, be = make_motor(1)
-
-    def responder(cid, data):
-        if (cid >> 24) & 0x1F == p.COMM_READ_PARAM:
-            idx = struct.unpack("<H", data[:2])[0]
-            reply_id = (p.COMM_READ_PARAM << 24) | (1 << 8) | p.HOST_CAN_ID
-            return [(reply_id, struct.pack("<H2x", idx) + struct.pack("<f", 24.5))]
-    be.responder = responder
-    assert m.read_param(p.ParamIndex.VBUS) == pytest.approx(24.5)
+def test_feedback_fault_flag_latches():
+    motor, _ = wired(FakeMotor(1, fault_flag=True, enabled=True))
+    motor.send_command(0.0, 0, 10, 1, 0)
+    assert motor.fault_latched == "feedback fault flag set"
 
 
-def test_read_param_timeout():
-    m, be = make_motor(1)
+def test_explicit_clear_fault_resets_latch():
+    fake = FakeMotor(1, fault_word=1)
+    motor, _ = wired(fake)
+    motor.query_fault()
+    motor.clear_fault()
+    assert motor.fault_latched is None and fake.fault_word == 0
+
+
+def test_missing_motor_times_out():
+    motor, _ = wired(FakeMotor(1, online=False))
     with pytest.raises(ParamTimeout):
-        m.read_param(p.ParamIndex.VBUS, timeout=0.05)
-
-
-def test_read_param_ignores_mismatched_reply():
-    m, be = make_motor(1)
-
-    def stale_responder(cid, data):
-        if (cid >> 24) & 0x1F == p.COMM_READ_PARAM:
-            reply_id = (p.COMM_READ_PARAM << 24) | (1 << 8) | p.HOST_CAN_ID
-            # Reply with a late packet whose index doesn't match: must be ignored -> timeout
-            return [(reply_id, struct.pack("<H2x", 0x9999) + struct.pack("<f", 1.0))]
-    be.responder = stale_responder
+        motor.read_state(timeout=0.005, attempts=2)
     with pytest.raises(ParamTimeout):
-        m.read_param(p.ParamIndex.VBUS, timeout=0.05)
+        motor.query_fault(timeout=0.005)
+
+
+def test_params_probe_and_write_readback():
+    legacy, _ = wired(FakeMotor(1))
+    assert legacy.probe_params(timeout=0.01) is False
+    modern, _ = wired(FakeMotor(7, params_supported=True))
+    assert modern.probe_params() is True
+    assert modern.write_param(p.ParamIndex.CAN_TIMEOUT, 10000, "u32") == 10000
+
+
+def test_write_acknowledgement_is_not_a_read_result():
+    import struct
+    motor, bus = wired(FakeMotor(7, params_supported=True))
+    bus.responder = lambda cid, data: [(0x407, struct.pack("<H2xI", p.ParamIndex.CAN_TIMEOUT, 10000))]
+    with pytest.raises(ParamTimeout):
+        motor.read_param(p.ParamIndex.CAN_TIMEOUT, "u32", timeout=0.01)
+
+
+def test_read_state_safe_refuses_on_a_fresh_fault():
+    fake = FakeMotor(1, fault_word=1)
+    motor, _ = wired(fake)
+    with pytest.raises(FaultLatched):
+        motor.read_state_safe()
+    assert fake.fault_word == 1

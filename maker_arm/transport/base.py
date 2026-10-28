@@ -8,6 +8,15 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 
+class CanId(int):
+    """Numeric arbitration ID retaining the standard/extended frame distinction."""
+
+    def __new__(cls, value: int, extended: bool = True):
+        instance = super().__new__(cls, value)
+        instance.extended = extended
+        return instance
+
+
 class CanBackend(ABC):
     @abstractmethod
     def open(self) -> None: ...
@@ -16,7 +25,7 @@ class CanBackend(ABC):
     def close(self) -> None: ...
 
     @abstractmethod
-    def send(self, can_id: int, data: bytes) -> None: ...
+    def send(self, can_id: int, data: bytes, extended: bool = True) -> None: ...
 
     @abstractmethod
     def set_recv_callback(self, cb: Callable[[int, bytes], None]) -> None: ...

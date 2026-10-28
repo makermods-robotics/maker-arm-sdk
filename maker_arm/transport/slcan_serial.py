@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Callable, Optional
 
-from .base import CanBackend
+from .base import CanBackend, CanId
 
 log = logging.getLogger("maker_arm.transport")
 
@@ -65,7 +65,7 @@ class SlcanFrameParser:
                 data = bytes.fromhex(raw[2 + id_len:payload_end].decode("ascii"))
             except (UnicodeDecodeError, ValueError):
                 continue
-            out.append((can_id, data))
+            out.append((CanId(can_id, raw[:1] == b"T"), data))
         return out
 
 

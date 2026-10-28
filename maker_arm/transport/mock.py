@@ -2,12 +2,13 @@
 
 from typing import Callable, Optional
 
-from .base import CanBackend
+from .base import CanBackend, CanId
 
 
 class MockBackend(CanBackend):
     def __init__(self):
         self.sent: list[tuple[int, bytes]] = []
+        self.sent_extended: list[bool] = []
         self.is_open = False
         self._cb: Optional[Callable[[int, bytes], None]] = None
         # responder(can_id, data) -> [(can_id, data), ...] to inject, or None
@@ -19,8 +20,9 @@ class MockBackend(CanBackend):
     def close(self) -> None:
         self.is_open = False
 
-    def send(self, can_id: int, data: bytes) -> None:
+    def send(self, can_id: int, data: bytes, extended: bool = True) -> None:
         self.sent.append((can_id, bytes(data)))
+        self.sent_extended.append(extended)
         if self.responder and self._cb:
             for cid, d in (self.responder(can_id, data) or []):
                 self._cb(cid, d)
@@ -28,6 +30,6 @@ class MockBackend(CanBackend):
     def set_recv_callback(self, cb) -> None:
         self._cb = cb
 
-    def inject(self, can_id: int, data: bytes) -> None:
+    def inject(self, can_id: int, data: bytes, extended: bool = True) -> None:
         if self._cb:
-            self._cb(can_id, data)
+            self._cb(CanId(can_id, extended), data)

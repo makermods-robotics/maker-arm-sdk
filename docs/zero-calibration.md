@@ -1,18 +1,17 @@
 # Zero calibration
 
-Zero calibration is the only supported end-user calibration. It is intended for initial factory
-assembly or replacement of a failed motor. It never changes model limits, directions, gains, or
-the Star-to-Maker mapping.
+Zero calibration is the only supported end-user calibration, identical to MakerModsLab's Maker
+calibration. It never changes model limits, gains, or the Star-to-Maker mapping.
 
 ```bash
-maker-arm zero --motor 4
-maker-arm zero --all
+maker-arm zero --all                    # follower
+maker-arm zero --all --star-port PORT   # follower, then the Star leader
+maker-arm zero --leader-only --star-port PORT
+maker-arm zero --motor 4                # one replaced motor
 ```
 
-The arm must be torque-free and the selected joint must be placed in the Maker Arm v1 defined
-mechanical reference pose before writing zero. The command requires an explicit target so an
-operator cannot accidentally zero every motor.
-
-Release blocker: the production mechanical zero fixture/pose and expected post-zero coordinates
-for all seven joints still need a drawing and acceptance tolerances. Do not publish a hardware
-release until that reference is documented and verified against the fixed profile.
+Torque is released for the whole procedure. Move the arm by hand to the ZERO POSE — folded
+against the base, gripper fully closed — and confirm. The command prints the positions before
+and after; the zero is stored in the motors (RobStride set-zero) and in the leader servos
+(FashionStar origin point). A power cycle can reset a motor's multi-turn count; the SDK
+corrects a whole-turn offset automatically at connect.

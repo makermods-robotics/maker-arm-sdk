@@ -26,8 +26,22 @@ def _read_leader_snapshot(bus, servo_ids: list[int], timeout: float = 2.0) -> di
     while len(raw) != len(servo_ids) and time.monotonic() < deadline:
         data = bus.sync_monitor(servo_ids)
         raw.update({i: data[i].angle_deg for i in servo_ids
-                    if data.get(i) and data[i].reliable})
+                    if data.get(i) is not None})
     return raw
+
+
+def _configure_leader(bus, servo_ids: list[int]) -> None:
+    """As LeRobot's RebotArm102Leader.connect(): every servo must answer, then each is
+    unlocked (back-drivable) and its multi-turn counter reset."""
+    for sid in servo_ids:
+        if not bus.ping(sid):
+            bus.close()
+            raise SystemExit(f"Star leader servo {sid} did not answer -- check the star serial port/IDs")
+    for sid in servo_ids:
+        bus.unlock(sid)
+        time.sleep(0.01)
+    for sid in servo_ids:
+        bus.reset_multi_turn(sid)
 
 
 def main():
@@ -58,8 +72,6 @@ def main():
                     help="minimum |measured torque| for a stall candidate, Nm")
     ap.add_argument("--stall-seconds", type=float, default=0.5,
                     help="candidate persistence before stall confirmation")
-    ap.add_argument("--max-temperature", type=float, default=70.0,
-                    help="freeze and stop teleop if any motor reaches this temperature, °C")
     a = ap.parse_args()
     star_ids = [int(x) for x in a.star_ids.split(",")]
     if not math.isfinite(a.payload_kg) or a.payload_kg < 0:
@@ -67,8 +79,6 @@ def main():
     thresholds_raw = (a.stall_error, a.stall_velocity, a.stall_torque, a.stall_seconds)
     if not all(math.isfinite(value) and value > 0 for value in thresholds_raw):
         raise SystemExit("stall thresholds must be finite and greater than zero")
-    if not math.isfinite(a.max_temperature) or a.max_temperature <= 0:
-        raise SystemExit("--max-temperature must be finite and greater than zero")
     require_interactive_terminal("teleoperation")
     leader_rate = a.rate if a.rate is not None else (25.0 if a.backend == "slcan" else 100.0)
     if not math.isfinite(leader_rate) or leader_rate <= 0:
@@ -77,9 +87,10 @@ def main():
     try:
         from motorbridge_smart_servo import FashionStarServo
     except ImportError:
-        raise SystemExit("missing motorbridge_smart_servo: conda run -n maker-arm pip install motorbridge-smart-servo (or see the plan's Task 18 environment notes)")
+        raise SystemExit("missing motorbridge-smart-servo: pip install motorbridge-smart-servo")
 
     bus = FashionStarServo(a.star_port, baudrate=1_000_000)
+    _configure_leader(bus, star_ids)
     mapper = JointMapper.from_json(a.map_path)
     arm = arm_from_args(a)
     recorder = None
@@ -122,7 +133,7 @@ def main():
             raise SystemExit(f"leader only read {sorted(raw)} -- check the star serial port/IDs")
         targets = mapper.map(raw)
         diff = max(abs(t - c) for t, c in zip(targets, arm.get_joint_positions()))
-        print(f"startup pose difference max={diff:.2f} rad (the follower will ramp up to it at the rate limit)")
+        print(f"startup pose difference max={diff:.2f} rad (the follower catches up through startup sync)")
         if diff > a.sync_threshold:
             input(f"⚠️ pose difference exceeds {a.sync_threshold} rad, confirm the area is clear and press ENTER to start > ")
         arm.enable()
@@ -139,7 +150,7 @@ def main():
                 print(f"leader read error, stopping follow: {e}")
                 stop_reason = f"leader_read_error: {e}"
                 break
-            raw = {i: data[i].angle_deg for i in star_ids if data.get(i) and data[i].reliable}
+            raw = {i: data[i].angle_deg for i in star_ids if data.get(i) is not None}
             for i in star_ids:
                 misses[i] = 0 if i in raw else misses[i] + 1
             lost = [i for i, count in misses.items() if count >= 50]
@@ -171,17 +182,6 @@ def main():
                         f"torque={first.torque_nm:+.2f} Nm)."
                     )
                     print("All commands frozen at the measured pose; teleop stopped.")
-                    break
-                temperatures = arm.get_temperatures()
-                hot = [
-                    arm.config.joints[i].motor_id
-                    for i, temperature in enumerate(temperatures)
-                    if math.isfinite(temperature) and temperature >= a.max_temperature
-                ]
-                if hot:
-                    arm.hold_current_position()
-                    stop_reason = f"over_temperature_CAN{','.join(map(str, hot))}"
-                    print(f"\nTEMPERATURE ABORT: CAN motors {hot}; commands frozen and teleop stopped.")
                     break
             remain = dt - (time.perf_counter() - t0)
             if remain > 0:

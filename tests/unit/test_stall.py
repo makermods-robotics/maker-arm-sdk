@@ -6,7 +6,7 @@ from maker_arm.stall import MotorStateRecorder, StallDetector, StallThresholds
 
 
 def sample(detector, now, motor_id=1, *, error=0.2, velocity=0.01, torque=2.0,
-           feedback_age=0.01, mode=2, fault_bits=0):
+           feedback_age=0.01, faulted=False):
     return detector.update(
         now,
         motor_id,
@@ -14,8 +14,7 @@ def sample(detector, now, motor_id=1, *, error=0.2, velocity=0.01, torque=2.0,
         velocity=velocity,
         torque=torque,
         feedback_age=feedback_age,
-        mode=mode,
-        fault_bits=fault_bits,
+        faulted=faulted,
     )
 
 
@@ -51,8 +50,7 @@ def test_candidate_requires_error_low_speed_torque_and_fresh_healthy_feedback():
         {"velocity": 0.2},
         {"torque": 0.1},
         {"feedback_age": 0.3},
-        {"mode": 0},
-        {"fault_bits": 1},
+        {"faulted": True},
         {"error": math.nan},
     ]
     for index, overrides in enumerate(cases):
@@ -69,14 +67,15 @@ def test_independent_motors_preserve_confirmation_order():
 
 
 def test_recorder_writes_all_motors_and_summary(tmp_path):
-    feedback = SimpleNamespace(mode=2, fault_bits=0)
+    feedback = SimpleNamespace(mode=2)
+    healthy = dict(feedback=feedback, feedback_age=0.01, fault_age=0.01,
+                   fault_status=SimpleNamespace(word=0), fault_latched=None)
     motors = [
-        SimpleNamespace(feedback=feedback, feedback_age=0.01,
-                        params=SimpleNamespace(t_min=-14.0, t_max=14.0)),
-        SimpleNamespace(feedback=feedback, feedback_age=0.01,
-                        params=SimpleNamespace(t_min=-17.0, t_max=17.0)),
+        SimpleNamespace(**healthy, params=SimpleNamespace(t_min=-14.0, t_max=14.0)),
+        SimpleNamespace(**healthy, params=SimpleNamespace(t_min=-17.0, t_max=17.0)),
     ]
     arm = SimpleNamespace(
+        state=SimpleNamespace(value="enabled"),
         config=SimpleNamespace(joints=[
             SimpleNamespace(motor_id=1, model="RS00"),
             SimpleNamespace(motor_id=2, model="RS02"),
@@ -102,3 +101,11 @@ def test_recorder_writes_all_motors_and_summary(tmp_path):
     assert summary["payload_kg"] == 1.5
     assert summary["first_stall"]["motor_id"] == 1
     assert summary["motor_peaks"]["1"]["max_abs_torque_nm"] == 2.0
+
+
+def test_stall_requires_enabled_unfaulted_arm():
+    detector = StallDetector([1], StallThresholds())
+    kwargs = dict(error=.2, velocity=.01, torque=2, feedback_age=.01)
+    assert not detector.is_candidate(**kwargs, faulted=False, enabled=False)
+    assert not detector.is_candidate(**kwargs, faulted=True, enabled=True)
+    assert detector.is_candidate(**kwargs, faulted=False, enabled=True)

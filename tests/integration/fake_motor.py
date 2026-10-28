@@ -1,17 +1,23 @@
-"""A fake motor fleet on vcan: realistic enough to test the full Arm pipeline, no physics model."""
+"""Simulated MIT motors on a vcan interface, reusing the in-memory simulator from tests/fakes.py."""
 
-import struct
-
-from maker_arm import protocol as p
+from fakes import FakeMotor
 from maker_arm.transport.socketcan import SocketCanBackend
 
 
 class FakeMotorFleet:
     def __init__(self, channel: str, motor_ids: list[int]):
         self._be = SocketCanBackend(channel)
-        self.positions = {mid: 0.0 for mid in motor_ids}   # motor coordinates, rad
-        self.paused = False
+        self.motors = {mid: FakeMotor(mid) for mid in motor_ids}
         self._be.set_recv_callback(self._on_frame)
+
+    @property
+    def paused(self) -> bool:
+        return not all(m.online for m in self.motors.values())
+
+    @paused.setter
+    def paused(self, value: bool) -> None:
+        for m in self.motors.values():
+            m.online = not value
 
     def start(self) -> None:
         self._be.open()
@@ -19,32 +25,11 @@ class FakeMotorFleet:
     def stop(self) -> None:
         self._be.close()
 
-    def _feedback(self, mid: int) -> tuple[int, bytes]:
-        cid = (p.COMM_FEEDBACK << 24) | (2 << 22) | (mid << 8) | p.HOST_CAN_ID
-        data = struct.pack(">HHHH",
-                           p.float_to_u16(self.positions[mid], p.P_MIN, p.P_MAX),
-                           p.float_to_u16(0.0, p.V_MIN, p.V_MAX),
-                           p.float_to_u16(0.0, p.T_MIN, p.T_MAX), 300)
-        return cid, data
-
-    def _on_frame(self, can_id: int, data: bytes) -> None:
-        mid = can_id & 0xFF
-        if mid not in self.positions or self.paused:
+    def _on_frame(self, can_id, data) -> None:
+        if getattr(can_id, "extended", False):
             return
-        comm = (can_id >> 24) & 0x1F
-        if comm == p.COMM_MIT:
-            self.positions[mid] = p.u16_to_float(
-                int.from_bytes(data[:2], "big"), p.P_MIN, p.P_MAX)
-            self._be.send(*self._feedback(mid))
-        elif comm in (p.COMM_ENABLE, p.COMM_DISABLE, p.COMM_SET_ZERO):
-            self._be.send(*self._feedback(mid))
-        elif comm == p.COMM_READ_PARAM:
-            idx = struct.unpack("<H", data[:2])[0]
-            cid = (p.COMM_READ_PARAM << 24) | (mid << 8) | p.HOST_CAN_ID
-            if idx == p.ParamIndex.RUN_MODE:
-                value = struct.pack("<B3x", 0)
-            elif idx == p.ParamIndex.CAN_TIMEOUT:
-                value = struct.pack("<I", 4000)   # 200ms × 20 counts/ms
-            else:
-                value = struct.pack("<f", 0.0)
-            self._be.send(cid, struct.pack("<H2x", idx) + value)
+        m = self.motors.get(can_id & 0x7F)
+        if m is None or can_id == 0xFD:   # ignore our own replies
+            return
+        for cid, payload in m.handle(can_id, data):
+            self._be.send(cid, payload, extended=False)

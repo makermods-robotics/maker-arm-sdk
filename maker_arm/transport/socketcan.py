@@ -6,7 +6,7 @@ import struct
 import threading
 from typing import Callable, Optional
 
-from .base import CanBackend
+from .base import CanBackend, CanId
 
 CAN_EFF_FLAG = 0x80000000
 CAN_EFF_MASK = 0x1FFFFFFF
@@ -71,6 +71,6 @@ class SocketCanBackend(CanBackend):
                 cb = self._cb
                 if cb:
                     rid = (cid & CAN_EFF_MASK) if (cid & CAN_EFF_FLAG) else (cid & 0x7FF)
-                    cb(rid, payload[:dlc])
+                    cb(CanId(rid, bool(cid & CAN_EFF_FLAG)), payload[:dlc])
             except Exception:
                 log.exception("socketcan RX frame-processing exception (continuing to receive frames)")

@@ -1,22 +1,40 @@
-# maker-arm02: J2/J3 are RS02 (mapped ±17Nm/±44rad/s), the rest are RS00.
-# ⚠️ RS02 firmware ≤0.2.2.11 maps position to ±12.5 rad (the SDK assumes the newer
-#    firmware's ±12.57) -- as the first bring-up step, check the firmware version with
-#    READ_VERSION and upgrade first if it's too old.
-# Canonical model limits were captured from all seven motors on 2026-08-20. The engineering
-# capture is retained under tools/engineering/calibration/artifacts/maker_arm02; CAN 1 is the base and CAN 7
-# is the gripper. Re-run the README calibration sequence after mechanical or zero changes.
+# Maker Arm v1 follower, MIT protocol only. Mirrors MakerModsLab exactly:
+#   limits, models and gains: LeRobot MakerFollowerConfig (makermods-robotics/lerobot@5ce2fe41a)
+#   gripper open bound -96 deg and gripper protection: MakerModsLab gripper_settings.py /
+#   maker_gripper_hold.py
+# Zero pose (set with `maker-arm zero`): folded against the base, gripper fully closed.
+# Limits are the vendor's stop captures with a 0.05 rad backoff, in motor degrees.
+# RS02 (J2/J3) firmware <=0.2.2.11 maps position to ±12.5 rad instead of ±12.57; check
+# firmware during bring-up.
+host_id: 253
+required_motor_ids: [1, 2, 3, 4, 5, 6, 7]
 control_rate_hz: 200
-max_velocity: 5.0          # latest value verified during macOS SLCAN teleop
-limit_margin: 0.0          # limits captured with a 0.05-rad mechanical-stop backoff already applied
-feedback_timeout: 0.2
-motor_can_timeout_ms: 200
-# These gains were exercised together in full seven-motor teleoperation on 2026-08-20.
-# Payload acceptance and production-unit repeatability remain hardware release checks.
+max_velocity: 5.0          # rad/s command rate limit (teleop-verified on macOS SLCAN)
+limit_margin: 0.0
+feedback_timeout: 0.25     # MakerModsLab teleop safety: feedback older than 250 ms stops
+fault_poll_interval: 0.25  # MakerModsLab gripper fault poll period
 joints:
-  - {motor_id: 1, model: RS00, direction: 1, offset: 0.0, lo: -0.668, hi: 4.818, kp: 60, kd: 4.0}
-  - {motor_id: 2, model: RS02, direction: 1, offset: 0.0, lo: -2.024, hi: 0.979, kp: 150, kd: 4.5}
-  - {motor_id: 3, model: RS02, direction: 1, offset: 0.0, lo: 3.882, hi: 7.955, kp: 90, kd: 3.0}
-  - {motor_id: 4, model: RS00, direction: 1, offset: 0.0, lo: -0.832, hi: 2.122, kp: 30, kd: 2.0}
-  - {motor_id: 5, model: RS00, direction: 1, offset: 0.0, lo: 0.577, hi: 3.641, kp: 30, kd: 2.0}
-  - {motor_id: 6, model: RS00, direction: 1, offset: 0.0, lo: 0.966, hi: 6.292, kp: 30, kd: 2.0}
-  - {motor_id: 7, model: RS00, direction: 1, offset: 0.0, lo: -2.092, hi: -0.039, kp: 20, kd: 0.5}  # gripper: MIT mode, grip force = kp x position error, small kp = compliant force limiting
+  - {name: shoulder_pan,  motor_id: 1, model: RS00, limits_deg: [-158.2, 156.1], kp: 60,  kd: 4.0}
+  - {name: shoulder_lift, motor_id: 2, model: RS02, limits_deg: [-175.3, -3.2],  kp: 150, kd: 4.5}
+  - {name: elbow_flex,    motor_id: 3, model: RS02, limits_deg: [2.8, 236.1],    kp: 90,  kd: 3.0}
+  - {name: wrist_flex,    motor_id: 4, model: RS00, limits_deg: [-65.2, 104.0],  kp: 30,  kd: 2.0}
+  - {name: wrist_yaw,     motor_id: 5, model: RS00, limits_deg: [-97.6, 78.0],   kp: 30,  kd: 2.0}
+  - {name: wrist_roll,    motor_id: 6, model: RS00, limits_deg: [-153.2, 152.0], kp: 30,  kd: 2.0}
+  # Gripper: closes toward increasing angle, 0 = fully closed. As MakerModsLab (default gripper
+  # hold on): closing effort capped at 1 Nm and grip regulated to 0.5 Nm on contact; 500 ms
+  # motor watchdog (firmware >=0.0.3.27); stop at 55 °C, no enable unless below 45 °C; warning
+  # or fault flag stops it; released (not held) on fault; excluded from the rest return.
+  - name: gripper
+    motor_id: 7
+    model: RS00
+    limits_deg: [-96.0, -2.5]
+    kp: 20
+    kd: 0.5
+    can_timeout_ms: 500
+    max_temperature_c: 55
+    enable_temperature_c: 45
+    return_to_rest: false
+    release_on_fault: true
+    warning_is_fault: true
+    hold_torque_nm: 0.5
+    closing_direction: 1

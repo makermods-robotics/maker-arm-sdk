@@ -24,8 +24,9 @@ from pathlib import Path
 from tkinter import ttk
 
 from maker_arm.arm import Arm
-from maker_arm.errors import fault_text
+from maker_arm.cli.common import add_backend_args, arm_from_args
 from maker_arm.profiles import DEFAULT_ARM_CONFIG
+from maker_arm.protocol import fault_text
 
 
 @dataclass
@@ -190,6 +191,7 @@ class EncoderInspector:
                     "velocity": self.arm.get_joint_velocities(),
                     "temperature": self.arm.get_temperatures(),
                     "faults": self.arm.get_faults(),
+                    "latched": [m.fault_latched for m in self.arm.motors],
                     "age": [m.feedback_age for m in self.arm.motors],
                     "fresh": fresh,
                 }
@@ -245,7 +247,9 @@ class EncoderInspector:
             step = abs(value - previous) if math.isfinite(previous) and math.isfinite(value) else 0.0
             fault = snapshot["faults"][i]
             moving_now = step >= self.movement_threshold or abs(snapshot["velocity"][i]) >= 0.02
-            if not snapshot["fresh"][i]:
+            if snapshot["latched"][i]:
+                state, tag = "FAULT", "fault"
+            elif not snapshot["fresh"][i]:
                 state, tag = "STALE", "fault"
             elif fault:
                 state, tag = "FAULT", "fault"
@@ -295,7 +299,7 @@ class EncoderInspector:
             f"travel        {_fmt(stat.travel)} rad\n"
             f"peak step     {_fmt(stat.peak_step)} rad\n"
             f"soft limits   [{joint.lo:+.3f}, {joint.hi:+.3f}] rad\n"
-            f"fault         {fault_text(self.last_snapshot['faults'][i])}\n"
+            f"fault         {self.last_snapshot['latched'][i] or fault_text(self.last_snapshot['faults'][i])}\n"
             f"result        {'MOTION DETECTED' if moved else 'NO MOTION ABOVE THRESHOLD'}"
         )
 
@@ -372,7 +376,8 @@ class EncoderInspector:
                 "peak_sample_step_rad": stat.peak_step,
                 "configured_lo_rad": joint.lo,
                 "configured_hi_rad": joint.hi,
-                "fault_bits": self.last_snapshot["faults"][i],
+                "fault_word": self.last_snapshot["faults"][i],
+                "fault_latched": self.last_snapshot["latched"][i],
             })
         with path.open("w") as handle:
             json.dump({"timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -396,12 +401,7 @@ class EncoderInspector:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default=str(DEFAULT_ARM_CONFIG))
-    ap.add_argument("--backend", choices=["socketcan", "slcan"], default="socketcan")
-    ap.add_argument("--channel", default="can0")
-    ap.add_argument("--port", default="/dev/ttyUSB0")
-    ap.add_argument("--serial-baudrate", type=int,
-                    help="serial rate (SLCAN default 115200; AT default 921600)")
-    ap.add_argument("--slcan-startup-delay", type=float, default=2.5)
+    add_backend_args(ap)
     ap.add_argument("--poll-hz", type=float, default=10.0)
     ap.add_argument("--history-seconds", type=float, default=30.0)
     ap.add_argument("--movement-threshold", type=float, default=0.002,
@@ -416,15 +416,9 @@ def main() -> None:
     if a.movement_threshold <= 0:
         raise SystemExit("--movement-threshold must be positive")
 
-    if a.backend == "socketcan":
-        kw = {"channel": a.channel}
-    elif a.backend == "slcan":
-        kw = {"port": a.port, "baudrate": a.serial_baudrate or 115200,
-              "rtscts": False, "startup_delay": a.slcan_startup_delay}
-    else:
-        kw = {"port": a.port, "baudrate": a.serial_baudrate or 921600}
-
-    arm = Arm.from_yaml(a.config, backend=a.backend, **kw)
+    # Read-only: faults are reported and kept (connect() fails on a faulted motor; clear it
+    # explicitly with `maker-arm scan --clear-faults` once the cause is fixed).
+    arm = arm_from_args(a)
     arm.connect()
     root = tk.Tk()
     app = EncoderInspector(root, arm, a.poll_hz, a.history_seconds,

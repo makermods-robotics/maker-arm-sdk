@@ -1,0 +1,8 @@
+{
+  "name": "maker-arm-urdf-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {"test": "node --test test_mapping.mjs", "build": "node build.mjs"},
+  "dependencies": {"three": "0.185.1", "urdf-loader": "0.13.1"}
+}

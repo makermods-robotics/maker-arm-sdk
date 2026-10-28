@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""SocketCAN/SLCAN performance comparison: RTT plus sustained torque-free probe throughput."""
+"""SocketCAN/SLCAN performance comparison: RTT plus sustained torque-free probe throughput.
+
+Uses only the MIT non-clearing fault query (FF x6 00 FB), which neither changes torque state
+nor clears fault evidence, so it is safe on a powered arm.
+"""
 
 import argparse
 import csv
@@ -7,16 +11,14 @@ import statistics
 import time
 
 from maker_arm import protocol as p
+from maker_arm.cli.common import add_backend_args, backend_from_args
 from maker_arm.errors import ParamTimeout
 from maker_arm.motor import Motor
-from maker_arm.transport.base import create_backend
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--backend", choices=["socketcan", "slcan"], required=True)
-    ap.add_argument("--channel", default="can0")
-    ap.add_argument("--port", default="/dev/ttyUSB0")
+    add_backend_args(ap)
     ap.add_argument("--ids", default="1,2,3,4,5,6,7")
     ap.add_argument("--rtt-n", type=int, default=500)
     ap.add_argument("--seconds", type=float, default=30.0)
@@ -25,31 +27,30 @@ def main():
     a = ap.parse_args()
     ids = [int(x) for x in a.ids.split(",")]
 
-    kw = {"channel": a.channel} if a.backend == "socketcan" else {"port": a.port}
-    be = create_backend(a.backend, **kw)
+    be = backend_from_args(a)
     rx_count = [0]
     motors = {mid: Motor(mid, be) for mid in ids}
 
     def on_frame(cid, d):
-        msg = p.parse_frame(cid, d)
+        m = motors.get(p.reply_motor_id(cid, d))
+        if m is None:
+            return
+        msg = p.parse_frame(cid, d, m.params)
         if msg is None:
             return
-        if isinstance(msg, p.MotorFeedback):
-            rx_count[0] += 1
-        m = motors.get(getattr(msg, "motor_id", None))
-        if m:
-            m.handle_frame(msg)
+        rx_count[0] += 1
+        m.handle_frame(msg)
 
     be.set_recv_callback(on_frame)
     be.open()
     try:
-        # ── RTT ──
+        # ── RTT: one non-clearing fault query round trip ──
         rtts = []
         m0 = motors[ids[0]]
         for _ in range(a.rtt_n):
             t0 = time.perf_counter()
             try:
-                m0.read_param(p.ParamIndex.VBUS, timeout=0.5)
+                m0.query_fault(timeout=0.5)
                 rtts.append((time.perf_counter() - t0) * 1000.0)
             except ParamTimeout:
                 pass
@@ -68,7 +69,7 @@ def main():
         next_t = time.perf_counter()
         while time.perf_counter() < t_end:
             for mid in ids:
-                be.send(*p.encode_disable(mid))
+                be.send(*p.encode_fault_query(mid), extended=False)
                 tx += 1
             next_t += dt
             remain = next_t - time.perf_counter()

@@ -1,55 +1,45 @@
+import math
+
 import pytest
-import yaml
 
-from maker_arm.config import ArmConfig
-
-GOOD = {
-    "control_rate_hz": 200, "max_velocity": 1.5, "limit_margin": 0.05,
-    "feedback_timeout": 0.2, "motor_can_timeout_ms": 200,
-    "joints": [
-        {"motor_id": 1, "direction": 1, "offset": 0.0, "lo": -2.79, "hi": 2.79, "kp": 60, "kd": 2.0},
-        {"motor_id": 2, "direction": -1, "offset": 0.1, "lo": 0.0, "hi": 3.66, "kp": 80, "kd": 3.0},
-    ],
-}
+from maker_arm.config import ArmConfig, JointConfig
 
 
-def write(tmp_path, cfg):
-    f = tmp_path / "arm.yaml"
-    f.write_text(yaml.safe_dump(cfg))
-    return str(f)
+def write(tmp_path, text):
+    path = tmp_path / "arm.yaml"
+    path.write_text(text)
+    return path
 
 
-def test_load_good(tmp_path):
-    cfg = ArmConfig.from_yaml(write(tmp_path, GOOD))
-    assert cfg.n_joints == 2
-    assert cfg.joints[1].direction == -1 and cfg.joints[1].offset == 0.1
-    assert cfg.control_rate_hz == 200
+def test_limits_in_degrees_and_deg_suffixed_settings(tmp_path):
+    cfg = ArmConfig.from_yaml(write(tmp_path, """
+startup_step_deg: 2.0
+joints:
+  - {motor_id: 1, limits_deg: [-90, 45], kp: 10, kd: 1}
+"""))
+    assert (cfg.joints[0].lo, cfg.joints[0].hi) == pytest.approx((-math.pi / 2, math.pi / 4))
+    assert cfg.startup_step == pytest.approx(math.radians(2.0))
 
 
-@pytest.mark.parametrize("mutate,msg", [
-    (lambda c: c["joints"][0].update(direction=2), "direction"),
-    (lambda c: c["joints"][0].update(lo=5.0), "lo"),
-    (lambda c: c["joints"][1].update(motor_id=1), "unique"),
-    (lambda c: c["joints"][0].update(kd=9.0), "kd"),
-    (lambda c: c.update(motor_can_timeout_ms=0), "CAN_TIMEOUT"),
-    (lambda c: c.update(limit_margin=-0.5), "limit_margin"),
+def test_unknown_field_is_reported(tmp_path):
+    with pytest.raises(ValueError, match="unrecognized"):
+        ArmConfig.from_yaml(write(tmp_path, "wire_protocol: private\njoints: []\n"))
+
+
+@pytest.mark.parametrize("joint, message", [
+    (dict(motor_id=0, lo=-1, hi=1, kp=1, kd=1), "motor_id"),
+    (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=6), "kd"),
+    (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=1, model="RS99"), "unknown model"),
+    (dict(motor_id=1, lo=1, hi=-1, kp=1, kd=1), "limits"),
+    (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=1, can_timeout_ms=0), "can_timeout_ms"),
+    (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=1, max_temperature_c=50, enable_temperature_c=50), "enable_temperature_c"),
 ])
-def test_validation(tmp_path, mutate, msg):
-    import copy
-    bad = copy.deepcopy(GOOD)
-    mutate(bad)
-    with pytest.raises(ValueError, match=msg):
-        ArmConfig.from_yaml(write(tmp_path, bad))
+def test_validation(joint, message):
+    with pytest.raises(ValueError, match=message):
+        ArmConfig(joints=[JointConfig(**joint)])._validate()
 
 
-@pytest.mark.parametrize("mutate", [
-    lambda c: c.pop("joints"),                       # missing joints
-    lambda c: c.update(unknown_key=1),               # unknown top-level key
-    lambda c: c["joints"][0].update(typo_field=1),   # misspelled joint field
-])
-def test_malformed_yaml_raises_valueerror(tmp_path, mutate):
-    import copy
-    bad = copy.deepcopy(GOOD)
-    mutate(bad)
-    with pytest.raises(ValueError):
-        ArmConfig.from_yaml(write(tmp_path, bad))
+def test_required_ids_in_order():
+    joints = [JointConfig(motor_id=i, lo=-1, hi=1, kp=1, kd=1) for i in (2, 1)]
+    with pytest.raises(ValueError, match="exactly"):
+        ArmConfig(required_motor_ids=[1, 2], joints=joints)._validate()

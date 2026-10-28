@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
-"""Persistent Star→Maker zero-pose calibration, with both arms unpowered.
+"""Star -> Maker mapping calibration (LeRobot-style ``{servo, direction, range_deg}``), both arms unpowered.
 
-Move both arms to the same defined zero/reference pose and sample once. This updates only the
-absolute zero_deg/base_rad anchors; the measured direction and scale for each joint remain
-fixed in the mapping file, matching the Metal arm's zero-only calibration model.
+The mapping has no offset: ``follower_deg = unwrap(leader_raw_deg) * direction``. It is only
+valid when both arms read zero in the same pose (folded against the base, gripper fully
+closed). This tool therefore
+
+1. checks the zero pose: every Star servo must read ~0 deg and every follower joint must be
+   inside its soft limits (both arms zeroed in the same pose);
+2. measures ``direction`` (sign x scale) per joint from a second, matching pose:
+   ``direction = follower_deg / leader_deg`` relative to the zero pose.
+
+``range_deg`` is kept from the mapping file unless ``--range-from-profile`` is given, which
+writes the follower profile's limits truncated to integer degrees (as LeRobot's
+MakerFollowerConfig.joint_limits). The follower torque stays released throughout.
 """
 
 import argparse
 import json
+import math
 import time
 
-from maker_arm.arm import Arm
+from maker_arm.cli.common import add_backend_args, arm_from_args
+from maker_arm.mapping import JointMapper
 from maker_arm.profiles import DEFAULT_ARM_CONFIG
+
+ZERO_TOLERANCE_DEG = 5.0      # leader reading at the zero pose
+MIN_LEADER_TRAVEL_DEG = 15.0  # second pose must move each joint at least this far
 
 
 def _safe(fn):
@@ -40,72 +54,101 @@ def read_maker(arm):
 
 
 def validate_anchor_positions(positions, joints, grace=0.1):
-    """Anchor sanity check: base_rad must fall within each joint's soft limits (small grace
-    margin), otherwise it's treated as a bad reading and writing to disk is refused.
+    """Follower zero-pose sanity check: each joint must be inside its soft limits (small grace
+    margin), otherwise the reading is treated as bad and nothing is written.
 
-    Real-hardware incident: an anchor sampled during a 2π jump baked 6.36 into the file,
-    and teleop lurched violently on startup.
+    Real-hardware incident: a pose sampled during a 2π jump read 6.36 rad, and the resulting
+    calibration made teleop lurch violently on startup.
     """
     bad = []
     for pos, j in zip(positions, joints):
         if pos < j.lo - grace or pos > j.hi + grace:
-            bad.append(f"motor{j.motor_id}: base_rad {pos:+.3f} out of limits [{j.lo}, {j.hi}]"
-                       " (suspected 2π jump, check the zero point before re-anchoring)")
+            bad.append(f"motor{j.motor_id}: position {pos:+.3f} out of limits [{j.lo}, {j.hi}]"
+                       " (suspected 2π jump or stale zero; re-zero with 'maker-arm zero' first)")
     return bad
 
 
+def validate_leader_zero(star_deg, servo_ids, tolerance=ZERO_TOLERANCE_DEG):
+    """Leader zero-pose check: the offset-free mapping needs every servo near 0 deg."""
+    bad = []
+    for sid in servo_ids:
+        value = JointMapper.unwrap(star_deg[sid], -180.0, 180.0)
+        if abs(value) > tolerance:
+            bad.append(f"servo {sid}: reads {value:+.1f} deg at the zero pose (|x| <= {tolerance} required)")
+    return bad
+
+
+def measure_direction(leader0, leader1, follower0_rad, follower1_rad,
+                      min_travel=MIN_LEADER_TRAVEL_DEG):
+    """direction = follower travel / leader travel (degrees per degree), or None if too little travel."""
+    d_leader = leader1 - leader0
+    if not math.isfinite(d_leader) or abs(d_leader) < min_travel:
+        return None
+    return math.degrees(follower1_rad - follower0_rad) / d_leader
+
+
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=str(DEFAULT_ARM_CONFIG))
-    ap.add_argument("--backend", choices=["socketcan", "slcan"], default="socketcan")
-    ap.add_argument("--channel", default="can0")
-    ap.add_argument("--port", default="/dev/ttyUSB0")
-    ap.add_argument("--serial-baudrate", type=int, default=115200,
-                    help="SLCAN serial rate (default: 115200)")
-    ap.add_argument("--slcan-startup-delay", type=float, default=2.5)
+    add_backend_args(ap)
     ap.add_argument("--star-port", required=True)
-    ap.add_argument("--star-ids", default="0,1,2,3,4,5,6")
     ap.add_argument("--out", required=True,
                     help="mapping JSON to modify; no production profile is selected implicitly")
+    ap.add_argument("--range-from-profile", action="store_true",
+                    help="also set range_deg from the follower profile limits (integer degrees)")
     a = ap.parse_args()
-    star_ids = [int(x) for x in a.star_ids.split(",")]
 
+    with open(a.out) as f:
+        existing = json.load(f)
+    entries = existing["joints"]
     from motorbridge_smart_servo import FashionStarServo
     bus = FashionStarServo(a.star_port, baudrate=1_000_000)
-    if a.backend == "socketcan":
-        kw = {"channel": a.channel}
-    elif a.backend == "slcan":
-        kw = {"port": a.port, "baudrate": a.serial_baudrate,
-              "rtscts": False, "startup_delay": a.slcan_startup_delay}
-    else:
-        kw = {"port": a.port}
-    arm = Arm.from_yaml(a.config, backend=a.backend, **kw)
+    arm = arm_from_args(a)
     try:
+        if len(entries) != arm.config.n_joints:
+            raise SystemExit(f"mapping has {len(entries)} joints, profile has {arm.config.n_joints}")
+        servo_ids = [e["servo"] for e in entries]
         arm.connect()
-        with open(a.out) as f:
-            existing = json.load(f)
-        by_servo = {j["servo"]: j for j in existing["joints"]}
-        missing_cfg = [sid for sid in star_ids if sid not in by_servo]
-        if missing_cfg:
-            raise SystemExit(f"mapping file has no servo {missing_cfg}")
-        input("Move both arms to the corresponding zero pose, press ENTER to calibrate > ")
-        star_z, maker_z = read_star(bus, star_ids), read_maker(arm)
-        missing = [sid for sid in star_ids if sid not in star_z]
+
+        input("Move BOTH arms to the zero pose (folded against the base, gripper closed), ENTER > ")
+        star0, maker0 = read_star(bus, servo_ids), read_maker(arm)
+        missing = [sid for sid in servo_ids if sid not in star0]
         if missing:
             raise SystemExit(f"servo {missing} readings unreliable — reposition and rerun")
-        bad = validate_anchor_positions(maker_z, arm.config.joints)
+        bad = (validate_anchor_positions(maker0, arm.config.joints)
+               + validate_leader_zero(star0, servo_ids)
+               + [f"{j.label}: follower reads {math.degrees(q):+.1f} deg at the zero pose "
+                  f"(|x| <= {ZERO_TOLERANCE_DEG} required; re-zero with 'maker-arm zero')"
+                  for q, j in zip(maker0, arm.config.joints)
+                  if abs(math.degrees(q)) > ZERO_TOLERANCE_DEG])
         if bad:
-            raise SystemExit("zero pose out of limits, refusing to write to disk:\n  " + "\n  ".join(bad))
-        for i, sid in enumerate(star_ids):
-            by_servo[sid]["zero_deg"] = round(star_z[sid], 3)
-            by_servo[sid]["base_rad"] = round(maker_z[i], 4)
-            print(
-                f"J{i + 1} <- servo {sid}: zero_deg={by_servo[sid]['zero_deg']} "
-                f"base_rad={by_servo[sid]['base_rad']}"
-            )
+            raise SystemExit("zero pose check failed, nothing written:\n  " + "\n  ".join(bad))
+
+        input("Move BOTH arms to a second matching pose, every joint well away from zero, ENTER > ")
+        star1, maker1 = read_star(bus, servo_ids), read_maker(arm)
+        missing = [sid for sid in servo_ids if sid not in star1]
+        if missing:
+            raise SystemExit(f"servo {missing} readings unreliable — reposition and rerun")
+
+        for i, (entry, joint) in enumerate(zip(entries, arm.config.joints)):
+            sid = entry["servo"]
+            direction = measure_direction(star0[sid], star1[sid], maker0[i], maker1[i])
+            label = entry.get("name") or joint.label
+            if direction is None:
+                print(f"{label} (servo {sid}): leader moved < {MIN_LEADER_TRAVEL_DEG} deg, "
+                      f"direction kept at {entry['direction']}")
+            else:
+                entry["direction"] = round(direction, 6)
+                print(f"{label} (servo {sid}): direction = {entry['direction']}")
+            if a.range_from_profile:
+                entry["range_deg"] = [int(math.degrees(joint.lo)), int(math.degrees(joint.hi))]
+                print(f"  range_deg = {entry['range_deg']}")
+        JointMapper(entries)   # validates direction != 0 and lo < hi before writing
         with open(a.out, "w") as f:
             json.dump(existing, f, indent=2, ensure_ascii=False)
-        print(f"absolute zero-pose calibration written to {a.out} (direction/scale unchanged)")
+            f.write("\n")
+        print(f"mapping written to {a.out}")
     finally:
         _safe(arm.disconnect)
         _safe(bus.close)

@@ -1,0 +1,110 @@
+# Maker Arm v1 -- kinematic geometry (the ONLY hand-measured data in the URDF).
+#
+# Joint limits are NOT here: they come from maker_arm/profiles/maker_arm_v1.yaml, which holds
+# the hardware endpoint captures. This file only says where each motor sits and which way it
+# turns. tools/engineering/gen_urdf.py merges the two.
+#
+# ── how to fill in `xyz` ──────────────────────────────────────────────────────────────────
+# In Fusion: press M (Measure), click the previous motor's shaft axis, click this motor's
+# shaft axis, read Delta X / Delta Y / Delta Z. Fusion shows mm -- DIVIDE BY 1000, URDF is
+# metres. xyz is measured in the PARENT joint's frame, i.e. it is the offset from the motor
+# before it, not from the base.
+#
+# ── how to fill in `rpy` / `axis` ─────────────────────────────────────────────────────────
+# `axis` is the spin direction in this joint's own frame; leave it [0,0,1] and put the whole
+# orientation in `rpy` (roll, pitch, yaw in RADIANS, applied X->Y->Z). Common values:
+#   [0, 0, 0]        next motor points the same way as the previous one
+#   [1.5708, 0, 0]   tipped 90 deg about X  (e.g. vertical yaw -> horizontal pitch)
+#   [-1.5708, 0, 0]  tipped -90 deg about X
+# Getting a sign wrong here does not make the arm slightly off, it makes it move the wrong
+# way. Verify these against the real robot, not by staring at CAD.
+#
+# ── home_offset / direction ───────────────────────────────────────────────────────────────
+# These reconcile URDF coordinates with raw encoder coordinates, using the SAME convention as
+# the SDK: motor_rad = urdf_rad * direction + home_offset.
+# home_offset is the raw encoder reading when the arm is in the URDF home pose (all zeros).
+# The values below are PROVISIONAL: each is the arithmetic midpoint of that joint's captured
+# travel, chosen only so that q=0 is inside the limits. Replace them with the encoder readings
+# taken in the real mechanical reference pose (see docs/zero-calibration.md) once that pose is
+# defined -- then paste direction/home_offset into maker_arm_v1.yaml as direction/offset and
+# the SDK will report URDF angles directly.
+
+base_link: base_link
+
+joints:
+  - name: joint1              # base yaw            (RS00, CAN 1)
+    motor_id: 1
+    child_link: link1
+    parts: [02-底座, yaw电机外壳, yaw轴承底座, yaw输出下部分]
+    xyz: [0.0, 0.0, 0.0]      # TODO measure: base origin -> motor 1 axis
+    rpy: [0.0, 0.0, 0.0]
+    axis: [0, 0, 1]
+    direction: 1
+    home_offset: 2.075
+
+  - name: joint2              # shoulder pitch      (RS02, CAN 2)
+    motor_id: 2
+    child_link: link2
+    parts: [rs02:1, L2电机固定底板]
+    xyz: [0.0, 0.0, 0.0]      # TODO measure: motor 1 axis -> motor 2 axis
+    rpy: [1.5708, 0.0, 0.0]   # TODO verify: yaw -> pitch usually needs a 90 deg tip
+    axis: [0, 0, 1]
+    direction: 1
+    home_offset: -0.5225
+
+  - name: joint3              # elbow pitch         (RS02, CAN 3)
+    motor_id: 3
+    child_link: link3
+    parts: [rs02:2, L2-P]
+    xyz: [0.0, 0.0, 0.0]      # TODO measure: motor 2 axis -> motor 3 axis (upper arm length)
+    rpy: [0.0, 0.0, 0.0]      # TODO verify: elbow is usually parallel to shoulder
+    axis: [0, 0, 1]
+    direction: 1
+    home_offset: 5.9185
+
+  - name: joint4              # forearm             (RS00, CAN 4)
+    motor_id: 4
+    child_link: link4
+    parts: [RS00:2, L3-P]
+    xyz: [0.0, 0.0, 0.0]      # TODO measure: motor 3 axis -> motor 4 axis (forearm length)
+    rpy: [0.0, 0.0, 0.0]      # TODO verify
+    axis: [0, 0, 1]
+    direction: 1
+    home_offset: 0.645
+
+  - name: joint5              # wrist               (RS00, CAN 5)
+    motor_id: 5
+    child_link: link5
+    parts: [末端轴承垫块]
+    xyz: [0.0, 0.0, 0.0]      # TODO measure: motor 4 axis -> motor 5 axis
+    rpy: [0.0, 0.0, 0.0]      # TODO verify
+    axis: [0, 0, 1]
+    direction: 1
+    home_offset: 2.109
+
+  - name: joint6              # wrist roll          (RS00, CAN 6)
+    motor_id: 6
+    child_link: link6
+    parts: [末端输出轴垫块]
+    xyz: [0.0, 0.0, 0.0]      # TODO measure: motor 5 axis -> motor 6 axis
+    rpy: [0.0, 0.0, 0.0]      # TODO verify
+    axis: [0, 0, 1]
+    direction: 1
+    home_offset: 3.629
+
+  # The real gripper (MA01-02) is a closed-loop linkage: one RS00 drives two jaws through
+  # connecting rods onto a 7mm linear rail. URDF is strictly a tree and cannot express a closed
+  # loop, so this models the DRIVE joint only, in motor coordinates, and carries both jaws as
+  # fixed decoration on the child link. That is correct for visualisation, forward kinematics
+  # and reach; it is NOT enough for grasp planning.
+  # To upgrade: replace with two prismatic jaw joints + <mimic>, and measure jaw gap against
+  # motor angle with calipers at 4-5 points to get the angle->opening curve.
+  - name: joint7              # gripper drive       (RS00, CAN 7)
+    motor_id: 7
+    child_link: gripper
+    parts: [MA01-02]
+    xyz: [0.0, 0.0, 0.0]      # TODO measure: motor 6 axis -> gripper drive axis
+    rpy: [0.0, 0.0, 0.0]      # TODO verify
+    axis: [0, 0, 1]
+    direction: -1             # -1 so that q=0 is the CLOSED end and opening is positive
+    home_offset: -0.039       # TODO verify which endpoint is actually closed (-0.039 or -2.092)

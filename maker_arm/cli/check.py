@@ -8,13 +8,12 @@ joint to its starting pose, prints a pass/fail summary, then waits before releas
 
 from __future__ import annotations
 
-import argparse
 import math
 import time
 
 from maker_arm.arm import Arm, ArmState
-from maker_arm.cli.safety import require_interactive_terminal, wait_for_release
-from maker_arm.profiles import DEFAULT_ARM_CONFIG
+from maker_arm.cli.common import arm_from_args, make_parser
+from maker_arm.cli.safety import release_if_holding, require_interactive_terminal
 
 
 def choose_test_delta(position: float, lo: float, hi: float, magnitude: float) -> float:
@@ -47,14 +46,7 @@ def wait_and_measure(arm: Arm, index: int, start: float, signed_delta: float,
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", default=str(DEFAULT_ARM_CONFIG))
-    ap.add_argument("--backend", choices=["socketcan", "slcan"], default="socketcan")
-    ap.add_argument("--channel", default="can0")
-    ap.add_argument("--port", default="/dev/ttyUSB0")
-    ap.add_argument("--serial-baudrate", type=int,
-                    help="SLCAN serial rate (default 115200)")
-    ap.add_argument("--slcan-startup-delay", type=float, default=2.5)
+    ap = make_parser(__doc__)
     ap.add_argument("--delta", type=float, default=0.05, help="commanded test motion, rad")
     ap.add_argument("--minimum-response", type=float, default=0.008,
                     help="minimum measured displacement to pass, rad")
@@ -70,12 +62,7 @@ def main() -> None:
         raise SystemExit("move/return durations must each be at least 0.5 seconds")
     require_interactive_terminal("powered checks")
 
-    if a.backend == "socketcan":
-        kw = {"channel": a.channel}
-    elif a.backend == "slcan":
-        kw = {"port": a.port, "baudrate": a.serial_baudrate or 115200,
-              "rtscts": False, "startup_delay": a.slcan_startup_delay}
-    arm = Arm.from_yaml(a.config, backend=a.backend, **kw)
+    arm = arm_from_args(a)
     arm.config.control_rate_hz = 25.0 if a.backend == "slcan" else 50.0
     arm.config.max_velocity = 0.12
     results = []
@@ -119,11 +106,9 @@ def main() -> None:
             print(f"  CAN {motor_id}: {peak:.4f} rad measured for {signed_delta:+.3f} rad command "
                   f"-- {'RESPONDING' if passed else 'NO ADEQUATE MOTION'}")
     finally:
-        if arm.state in (ArmState.ENABLED, ArmState.FAULT):
-            wait_for_release()
-            arm.disable()
+        release_if_holding(arm)
         arm.disconnect()
-        print("torque released, test exited")
+        print("test exited")
 
 
 if __name__ == "__main__":

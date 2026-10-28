@@ -8,9 +8,8 @@ import sys
 
 COMMANDS = {
     "doctor": ("maker_arm.cli.doctor", "inspect the computer and installed profiles"),
-    "scan": ("maker_arm.cli.scan", "scan the follower CAN bus"),
-    "assign-id": ("maker_arm.cli.assign_id", "assign an ID to one replacement motor"),
-    "zero": ("maker_arm.cli.zero", "zero one replacement motor or the full arm"),
+    "scan": ("maker_arm.cli.scan", "find motors: position, temperature, faults"),
+    "zero": ("maker_arm.cli.zero", "set the zero pose (follower, optionally the Star leader)"),
     "check": ("maker_arm.cli.check", "run a bounded powered motor response check"),
     "teleop": ("maker_arm.cli.teleop", "teleoperate from the Star leader"),
 }

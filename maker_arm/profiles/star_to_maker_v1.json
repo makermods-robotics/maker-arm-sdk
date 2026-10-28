@@ -1,55 +1,12 @@
 {
-  "_comment": "Fixed absolute Star-to-Maker v1 model mapping. Factory engineering captures are retained under tools/engineering/calibration/artifacts/maker_arm02.",
-  "alpha": 0.3,
+  "_comment": "Star Arm 102 leader -> Maker Arm v1, copied from LeRobot RebotArm102LeaderMakerConfig (makermods-robotics/lerobot@5ce2fe41a). direction = sign x scale from the 2026-08-20 hardware capture; range_deg = MakerFollowerConfig.joint_limits as integers. The follower profile clips the gripper further to -96 deg.",
   "joints": [
-    {
-      "servo": 0,
-      "zero_deg": -110.1,
-      "base_rad": -0.668,
-      "direction": 1.0,
-      "scale": 1.446501
-    },
-    {
-      "servo": 1,
-      "zero_deg": -0.3,
-      "base_rad": 0.979,
-      "direction": -1.0,
-      "scale": 0.859866
-    },
-    {
-      "servo": 2,
-      "zero_deg": -270.8,
-      "base_rad": 7.955,
-      "direction": -1.0,
-      "scale": 0.857332
-    },
-    {
-      "servo": 3,
-      "zero_deg": -103.9,
-      "base_rad": 2.122,
-      "direction": -1.0,
-      "scale": 0.85871
-    },
-    {
-      "servo": 4,
-      "zero_deg": -69.5,
-      "base_rad": 3.641,
-      "direction": -1.0,
-      "scale": 1.322941
-    },
-    {
-      "servo": 5,
-      "zero_deg": -159.6,
-      "base_rad": 0.966,
-      "direction": 1.0,
-      "scale": 0.954213
-    },
-    {
-      "servo": 6,
-      "zero_deg": -0.3,
-      "base_rad": -0.039,
-      "direction": -1.0,
-      "scale": 1.983613
-    }
+    {"name": "shoulder_pan",  "servo": 0, "direction": 1.446501,  "range_deg": [-158, 156]},
+    {"name": "shoulder_lift", "servo": 1, "direction": -0.859866, "range_deg": [-175, -3]},
+    {"name": "elbow_flex",    "servo": 2, "direction": -0.857332, "range_deg": [2, 236]},
+    {"name": "wrist_flex",    "servo": 3, "direction": -0.85871,  "range_deg": [-65, 104]},
+    {"name": "wrist_yaw",     "servo": 4, "direction": -1.322941, "range_deg": [-97, 78]},
+    {"name": "wrist_roll",    "servo": 5, "direction": 0.954213,  "range_deg": [-153, 152]},
+    {"name": "gripper",       "servo": 6, "direction": -1.983613, "range_deg": [-120, -2]}
   ]
 }
