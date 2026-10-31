@@ -20,7 +20,7 @@ classifiers = [
 maker-arm = "maker_arm.cli.main:main"
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "numpy"]
 
 [tool.setuptools.packages.find]
 include = ["maker_arm*"]
