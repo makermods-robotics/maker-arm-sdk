@@ -37,6 +37,7 @@ class FakeMotor:
     track: bool = True               # enabled motor jumps to the commanded position
     log: list = field(default_factory=list)
     last_kp: float = 0.0
+    frames: list = field(default_factory=list)   # every MIT frame received: (position, kp, tau)
 
     @property
     def mode(self) -> int:
@@ -83,8 +84,11 @@ class FakeMotor:
         kp = ((data[3] & 0xF) << 8 | data[4]) * p.KP_MAX / 4095
         self.last_kp = kp
         self.log.append(("cmd", round(kp, 1)))
+        position = p.uint_to_float(q, self.params.p_min, self.params.p_max, 16)
+        tau = p.uint_to_float((data[6] & 0xF) << 8 | data[7], self.params.t_min, self.params.t_max, 12)
+        self.frames.append((position, kp, tau))
         if self.enabled and self.track and kp > 0:
-            self.position = p.uint_to_float(q, self.params.p_min, self.params.p_max, 16)
+            self.position = position
         return [self.feedback()]
 
 

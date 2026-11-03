@@ -5,6 +5,7 @@ import glob
 import platform
 
 from maker_arm.arm import Arm
+from maker_arm.gravity import MAX_GRAVITY_SCALE
 from maker_arm.profiles import DEFAULT_ARM_CONFIG
 from maker_arm.transport.base import CanBackend, create_backend
 
@@ -36,6 +37,20 @@ def make_parser(desc: str) -> argparse.ArgumentParser:
     ap.add_argument("--config", default=str(DEFAULT_ARM_CONFIG))
     add_backend_args(ap)
     return ap
+
+
+def add_gravity_arg(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument("--gravity-scale", type=float,
+                    help=f"override the gravity feed-forward scale, 0..{MAX_GRAVITY_SCALE} (0 = off)")
+
+
+def apply_gravity_arg(arm: Arm, a) -> None:
+    if a.gravity_scale is None:
+        return
+    if not 0 <= a.gravity_scale <= MAX_GRAVITY_SCALE:
+        raise SystemExit(f"--gravity-scale must be in [0, {MAX_GRAVITY_SCALE}]")
+    arm.config.gravity_scale = a.gravity_scale
+    print(f"gravity feed-forward scale: {a.gravity_scale:g}")
 
 
 def resolve_port(a) -> str:

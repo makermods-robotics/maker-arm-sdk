@@ -5,7 +5,7 @@ import math
 import time
 from pathlib import Path
 
-from maker_arm.cli.common import arm_from_args, make_parser
+from maker_arm.cli.common import add_gravity_arg, apply_gravity_arg, arm_from_args, make_parser
 from maker_arm.mapping import JointMapper
 from maker_arm.profiles import DEFAULT_STAR_MAPPING
 from maker_arm.cli.safety import release_if_holding, require_interactive_terminal
@@ -56,6 +56,7 @@ def main():
     ap.add_argument("--max-velocity", type=float,
                     help="override follower velocity limit in rad/s (use a low value for first-motion checks)")
     ap.add_argument("--sync-threshold", type=float, default=0.8, help="startup pose-difference confirmation threshold, rad")
+    add_gravity_arg(ap)
     ap.add_argument(
         "--record-motor-states", nargs="?", const="", metavar="CSV",
         help="record all motor states and detect stalls; optionally provide the CSV path",
@@ -95,6 +96,7 @@ def main():
     arm = arm_from_args(a)
     recorder = None
     stop_reason = "normal_exit"
+    apply_gravity_arg(arm, a)
     if a.max_velocity is not None:
         if a.max_velocity <= 0:
             raise SystemExit("--max-velocity must be greater than zero")
