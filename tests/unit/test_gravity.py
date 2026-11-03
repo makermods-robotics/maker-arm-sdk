@@ -441,7 +441,7 @@ def wait(predicate, seconds=3.0):
 
 
 def test_control_loop_eases_in_and_the_return_to_rest_carries_gravity():
-    arm, motors = maker(track=True)
+    arm, motors = maker(track=True, feedback_timeout=5.0)  # a stalled runner must not trip the watchdog
     arm.enable()
     assert wait(lambda: arm._gravity.level == 1.0)
     assert wait(lambda: abs(motors[2].frames[-1][2] - gravity_nm(RAISED)[2]) < ONE_LSB)
