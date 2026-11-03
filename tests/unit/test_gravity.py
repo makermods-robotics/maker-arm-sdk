@@ -294,6 +294,8 @@ def test_measured_pose_then_goal_when_a_reply_is_stale():
     goal_deg = [q + 5 for q in RAISED]
     with arm._target_lock:
         arm._user_targets[:6] = arm._internal[:6] = [math.radians(q) for q in goal_deg]
+    for motor in arm.motors:
+        motor._fb_time = time.monotonic()
     arm._tick(0.005)
     assert sent_tau(motors[:6]) == pytest.approx(gravity_nm(RAISED), abs=ONE_LSB)
     arm.motors[2]._fb_time = time.monotonic() - (FRESH_S + 0.02)
