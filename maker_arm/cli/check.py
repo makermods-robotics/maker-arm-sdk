@@ -12,7 +12,7 @@ import math
 import time
 
 from maker_arm.arm import Arm, ArmState
-from maker_arm.cli.common import arm_from_args, make_parser
+from maker_arm.cli.common import add_gravity_arg, apply_gravity_arg, arm_from_args, make_parser
 from maker_arm.cli.safety import release_if_holding, require_interactive_terminal
 
 
@@ -53,6 +53,7 @@ def main() -> None:
     ap.add_argument("--move-seconds", type=float, default=1.2)
     ap.add_argument("--return-seconds", type=float, default=0.9)
     ap.add_argument("--motor", type=int, help="check only this configured CAN motor")
+    add_gravity_arg(ap)
     a = ap.parse_args()
     if not 0 < a.delta <= 0.1:
         raise SystemExit("--delta must be in (0, 0.1] rad")
@@ -65,6 +66,7 @@ def main() -> None:
     arm = arm_from_args(a)
     arm.config.control_rate_hz = 25.0 if a.backend == "slcan" else 50.0
     arm.config.max_velocity = 0.12
+    apply_gravity_arg(arm, a)
     results = []
     try:
         arm.connect()

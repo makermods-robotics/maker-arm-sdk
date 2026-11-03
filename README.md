@@ -96,6 +96,10 @@ The SDK mirrors MakerModsLab's Maker arm behaviour:
 - **Startup sync.** Until a joint has caught up with its target, its command stays within 1° of
   the measured position (synced within 3°, or released if it cannot move for 1 s). Targets
   are always clipped to the joint limits.
+- **Gravity feed-forward.** MIT frames on joints 1–6 carry the URDF model's holding torque, eased
+  in over 0.5 s after enable and capped per joint. It uses the measured pose while every joint has
+  replied within 150 ms, else the commanded pose. It assumes a table-mounted arm with no payload.
+  Set `gravity_scale` in the profile or pass `--gravity-scale` (0..1.2, 0 = off).
 - **Faults are latched.** A fault word or feedback fault flag stops the arm holding its current
   pose (no drop) and fault-clearing commands are refused until an explicit `clear_faults()`.
   Feedback older than 250 ms is a fault. Fault status is polled every 250 ms without clearing.

@@ -12,6 +12,7 @@ from typing import Optional
 import yaml
 
 from . import protocol
+from .gravity import DEFAULT_GRAVITY_SCALE, MAX_GRAVITY_SCALE
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class ArmConfig:
     fault_poll_interval: float = 0.25  # s, non-clearing fault query per motor while enabled
     full_turn_grace: float = math.radians(20.0)  # rad, see Arm.connect()
     hold_on_fault: bool = True         # on FAULT, hold the current pose (prevents a drop)
+    gravity_scale: float = DEFAULT_GRAVITY_SCALE  # 0..1.2, read at enable; see gravity.py
     # Startup sync (LeRobot MakerFollower): until a joint is synced its command stays within
     # step of the measured position; synced once |target - present| <= synced, or released
     # after it moves no more than stuck for stuck_seconds.
@@ -99,7 +101,9 @@ class ArmConfig:
                 raise ValueError(f"{name} must be >0, got {getattr(self, name)}")
         if self.limit_margin < 0 or self.full_turn_grace < 0:
             raise ValueError("limit_margin and full_turn_grace must be >=0")
-        ids = [j.motor_id for j in self.joints]
+        if not 0 <= self.gravity_scale <= MAX_GRAVITY_SCALE:
+            raise ValueError(f"gravity_scale must be in [0, {MAX_GRAVITY_SCALE}], got {self.gravity_scale}")
+        ids =[j.motor_id for j in self.joints]
         if len(set(ids)) != len(ids):
             raise ValueError(f"motor_id must be unique: {ids}")
         if self.required_motor_ids is not None and ids != self.required_motor_ids:

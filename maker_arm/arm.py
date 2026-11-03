@@ -16,6 +16,7 @@ from typing import Optional
 from . import protocol
 from .config import ArmConfig
 from .errors import ConnectError, FaultLatched, ParamTimeout, StateError
+from .gravity import JOINT_NAMES, GravityFeedforward, model_applies
 from .gripper import GripperHold
 from .motor import Motor
 from .transport.base import CanBackend, create_backend
@@ -62,6 +63,7 @@ class Arm:
         self._hold_out: dict[int, tuple[int, float, float, float]] = {}   # seq, position, kp, kd
         self._release_sent: dict[int, float] = {}
         self._poll_sent: dict[int, float] = {}
+        self._gravity: Optional[GravityFeedforward] = None
         self._tick_count = 0
         self._running = False
         self._loop_thread: Optional[threading.Thread] = None
@@ -255,6 +257,11 @@ class Arm:
                 limit = j.enable_temperature_c if j.enable_temperature_c is not None else j.max_temperature_c
                 if limit is not None and temp >= limit:
                     raise ConnectError(f"{j.label} is {temp:.1f} °C; enable needs it below {limit:.0f} °C")
+            gravity = GravityFeedforward(self.config.gravity_scale)
+            names = [j.name for j in self.config.joints]
+            self._gravity = gravity if gravity.scale > 0 and model_applies(names) else None
+            if gravity.scale > 0 and self._gravity is None:
+                log.warning("gravity feed-forward skipped: first joints %s are not the Maker arm's", names[:6])
             self._arm_watchdogs()
             now = time.monotonic()
             with self._target_lock:
@@ -644,6 +651,7 @@ class Arm:
                 step = min(maxstep, max(-maxstep, goal - self._internal[i]))
                 self._internal[i] += step
             commands = list(self._internal)
+        gravity = self._gravity_torques(commands, now)
         paced = getattr(self._backend, "feedback_paced_control", False)
         for i, j in enumerate(cfg.joints):
             if not self._may_send(session):
@@ -665,7 +673,7 @@ class Arm:
                 hold = self._hold.get(i)
                 if hold is not None and i not in self._faulted:
                     position, kp, kd = self._gripper_command(i, hold, commands[i], now)
-                motor.send_command(self._to_motor(i, position), 0.0, kp, kd, 0.0)
+                motor.send_command(self._to_motor(i, position), 0.0, kp, kd, gravity[i])
             except Exception as e:
                 if i not in self._faulted:
                     self._enter_fault(f"{j.label}: command failed ({e})", i)
@@ -691,6 +699,24 @@ class Arm:
                     log.error("fault query to motor %d failed: %s", self.motors[i].motor_id, e)
         self._tick_count += 1
         self._check_health()
+
+    def _gravity_torques(self, commands: list[float], now: float) -> list[float]:
+        """Feed-forward per joint in motor sign for this tick's frames; 0 on the gripper. A model
+        failure drops the feed-forward for this session, never the hold frames."""
+        tau = [0.0] * self.config.n_joints
+        if self._gravity is None:
+            return tau
+        try:
+            n = len(JOINT_NAMES)
+            feedback = [m.feedback for m in self.motors[:n]]
+            measured = [math.degrees(fb.position) if fb else math.nan for fb in feedback]
+            ages = [m.feedback_age for m in self.motors[:n]]
+            goal = [math.degrees(self._to_motor(i, commands[i])) for i in range(n)]
+            tau[:n] = self._gravity.torques(measured, ages, goal, now)
+        except Exception:
+            log.exception("gravity feed-forward failed; off until the next enable")
+            self._gravity = None
+        return tau
 
     def _gripper_command(self, i: int, hold: GripperHold, target: float, now: float):
         """Holding regulation on one fresh, self-consistent feedback sample (MakerModsLab reads a
