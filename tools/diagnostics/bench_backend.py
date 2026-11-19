@@ -11,14 +11,15 @@ import statistics
 import time
 
 from maker_arm import protocol as p
-from maker_arm.cli.common import add_backend_args, backend_from_args
+from maker_arm.cli.common import add_arm_args, target
+from maker_arm.config import JointConfig
 from maker_arm.errors import ParamTimeout
-from maker_arm.motor import Motor
+from maker_arm.motor import Motor, route
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    add_backend_args(ap)
+    add_arm_args(ap)
     ap.add_argument("--ids", default="1,2,3,4,5,6,7")
     ap.add_argument("--rtt-n", type=int, default=500)
     ap.add_argument("--seconds", type=float, default=30.0)
@@ -27,19 +28,17 @@ def main():
     a = ap.parse_args()
     ids = [int(x) for x in a.ids.split(",")]
 
-    be = backend_from_args(a)
+    t = target(a)
+    be = t.backend()
     rx_count = [0]
-    motors = {mid: Motor(mid, be) for mid in ids}
+    motors = {mid: Motor(JointConfig(motor_id=mid, lo=-1.0, hi=1.0, kp=0.0, kd=0.0), be) for mid in ids}
 
     def on_frame(cid, d):
-        m = motors.get(p.reply_motor_id(cid, d))
-        if m is None:
-            return
-        msg = p.parse_frame(cid, d, m.params)
-        if msg is None:
+        m = motors.get(route(cid, d))
+        if m is None or p.parse_frame(cid, d, m.params) is None:
             return
         rx_count[0] += 1
-        m.handle_frame(msg)
+        m.handle_frame(cid, d)
 
     be.set_recv_callback(on_frame)
     be.open()
@@ -50,7 +49,7 @@ def main():
         for _ in range(a.rtt_n):
             t0 = time.perf_counter()
             try:
-                m0.query_fault(timeout=0.5)
+                m0.check(timeout=0.5, attempts=1)
                 rtts.append((time.perf_counter() - t0) * 1000.0)
             except ParamTimeout:
                 pass
@@ -87,7 +86,7 @@ def main():
             if f.tell() == 0:
                 w.writerow(["backend", "rtt_p50_ms", "rtt_p95_ms", "rtt_max_ms",
                             "tx", "rx", "rx_ratio", "overruns", "rate", "seconds"])
-            w.writerow([a.backend, f"{p50:.3f}", f"{p95:.3f}", f"{pmax:.3f}",
+            w.writerow([t.spec.backend, f"{p50:.3f}", f"{p95:.3f}", f"{pmax:.3f}",
                         tx, rx, f"{rx / max(tx, 1):.4f}", overruns, a.rate, a.seconds])
         print(f"appended to {a.csv}")
     finally:

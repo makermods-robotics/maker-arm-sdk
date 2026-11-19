@@ -1,5 +1,5 @@
 {
-  "_comment": "Star Arm 102 leader -> Maker Arm v1, copied from LeRobot RebotArm102LeaderMakerConfig (makermods-robotics/lerobot@5ce2fe41a). direction = sign x scale from the 2026-08-20 hardware capture; range_deg = MakerFollowerConfig.joint_limits as integers. The follower profile clips the gripper further to -96 deg.",
+  "_comment": "Star Arm 102 leader -> Maker Arm v1. direction = sign x scale; range_deg = the follower limits as integers (the follower profile clips the gripper further, to -96 deg). Source: LeRobot RebotArm102LeaderMakerConfig (makermods-robotics/lerobot@5ce2fe41a).",
   "joints": [
     {"name": "shoulder_pan",  "servo": 0, "direction": 1.446501,  "range_deg": [-158, 156]},
     {"name": "shoulder_lift", "servo": 1, "direction": -0.859866, "range_deg": [-175, -3]},

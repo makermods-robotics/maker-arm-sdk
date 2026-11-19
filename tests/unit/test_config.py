@@ -2,7 +2,11 @@ import math
 
 import pytest
 
-from maker_arm.config import ArmConfig, JointConfig
+from conftest import sdk
+
+ArmConfig, JointConfig = sdk.config.ArmConfig, sdk.config.JointConfig
+ID_LO = sdk.motor.ID_RANGE[0]
+KD_HI = sdk.motor.KD_RANGE[1]
 
 
 def write(tmp_path, text):
@@ -27,9 +31,9 @@ def test_unknown_field_is_reported(tmp_path):
 
 
 @pytest.mark.parametrize("joint, message", [
-    (dict(motor_id=0, lo=-1, hi=1, kp=1, kd=1), "motor_id"),
-    (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=6), "kd"),
-    (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=1, model="RS99"), "unknown model"),
+    (dict(motor_id=ID_LO - 1, lo=-1, hi=1, kp=1, kd=1), "motor_id"),
+    (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=KD_HI + 1), "kd"),
+    (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=1, model="NO-SUCH-MODEL"), "unknown model"),
     (dict(motor_id=1, lo=1, hi=-1, kp=1, kd=1), "limits"),
     (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=1, can_timeout_ms=0), "can_timeout_ms"),
     (dict(motor_id=1, lo=-1, hi=1, kp=1, kd=1, max_temperature_c=50, enable_temperature_c=50), "enable_temperature_c"),
@@ -43,3 +47,14 @@ def test_required_ids_in_order():
     joints = [JointConfig(motor_id=i, lo=-1, hi=1, kp=1, kd=1) for i in (2, 1)]
     with pytest.raises(ValueError, match="exactly"):
         ArmConfig(required_motor_ids=[1, 2], joints=joints)._validate()
+
+
+def test_rest_pose_in_degrees_one_value_per_joint(tmp_path):
+    cfg = ArmConfig.from_yaml(write(tmp_path, """
+rest_pose_deg: [10]
+joints:
+  - {motor_id: 1, limits_deg: [-90, 45], kp: 10, kd: 1}
+"""))
+    assert cfg.rest_pose == pytest.approx([math.radians(10)])
+    with pytest.raises(ValueError, match="rest_pose"):
+        ArmConfig(rest_pose=[0.0, 0.0], joints=cfg.joints)._validate()

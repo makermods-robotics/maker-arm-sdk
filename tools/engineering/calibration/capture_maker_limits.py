@@ -18,7 +18,7 @@ import sys
 import time
 from datetime import datetime
 
-from maker_arm.cli.common import add_backend_args, arm_from_args
+from maker_arm.cli.common import add_arm_args, target
 from maker_arm.config import ArmConfig
 from maker_arm.protocol import fault_text
 
@@ -132,17 +132,17 @@ def _fmt(x):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", required=True,
-                    help="YAML profile to modify; engineering tools never choose a production profile implicitly")
-    add_backend_args(ap)
+    add_arm_args(ap)
     ap.add_argument("--backoff", type=float, default=0.05, help="limit backoff amount, rad")
     ap.add_argument("--json", dest="json_path", required=True,
                     help="raw engineering capture output path")
     ap.add_argument("--motor-id", type=int,
                     help="write only this CAN motor ID; other moving motors are recorded but never written")
     a = ap.parse_args()
+    if not a.config:
+        ap.error("--config is required: the YAML profile to modify (a production profile is never chosen implicitly)")
 
-    arm = arm_from_args(a)
+    arm = target(a).build()
     configured_ids = {j.motor_id for j in arm.config.joints}
     if a.motor_id is not None and a.motor_id not in configured_ids:
         raise SystemExit(f"--motor-id {a.motor_id} is not present in {a.config}")

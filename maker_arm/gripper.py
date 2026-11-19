@@ -1,6 +1,4 @@
-"""Gripper holding-effort regulation, ported from MakerModsLab (metal_gripper_hold.py
-HoldingController and maker_gripper_hold.py) with the Maker settings: closing direction +1,
-closing-effort cap on, 0.5 Nm default holding effort.
+"""Gripper holding-effort regulation.
 
 Free closing aims at the requested goal with Kp scaled so Kp x error never exceeds the closing
 cap (max(1, 2 x hold) Nm) and Kd lowered to CAPPED_CLOSING_KD. Once contact is detected (closing
@@ -11,10 +9,10 @@ settles at the holding target. Opening, or a sustained loss of contact, ends hol
 import math
 from collections import deque
 
-from . import protocol
+from .motor import KP_RANGE
 
 CAPPED_CLOSING_KD = 0.02
-_KP_STEP = (protocol.KP_MAX - protocol.KP_MIN) / 4095
+_KP_STEP = (KP_RANGE[1] - KP_RANGE[0]) / 4095   # the MIT frame's 12-bit Kp field
 
 
 class GripperHold:

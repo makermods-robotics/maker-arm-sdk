@@ -2,7 +2,9 @@ import math
 import json
 from types import SimpleNamespace
 
-from maker_arm.stall import MotorStateRecorder, StallDetector, StallThresholds
+from conftest import sdk
+
+MotorStateRecorder, StallDetector, StallThresholds = sdk.stall.MotorStateRecorder, sdk.stall.StallDetector, sdk.stall.StallThresholds
 
 
 def sample(detector, now, motor_id=1, *, error=0.2, velocity=0.01, torque=2.0,
@@ -67,18 +69,18 @@ def test_independent_motors_preserve_confirmation_order():
 
 
 def test_recorder_writes_all_motors_and_summary(tmp_path):
-    feedback = SimpleNamespace(mode=2)
-    healthy = dict(feedback=feedback, feedback_age=0.01, fault_age=0.01,
-                   fault_status=SimpleNamespace(word=0), fault_latched=None)
+    feedback = SimpleNamespace(enabled=True)
+    healthy = dict(feedback=feedback, feedback_age=0.01, status_age=0.01,
+                   status=SimpleNamespace(code=0, has_fault=False, text=""), fault_latched=None)
     motors = [
-        SimpleNamespace(**healthy, params=SimpleNamespace(t_min=-14.0, t_max=14.0)),
-        SimpleNamespace(**healthy, params=SimpleNamespace(t_min=-17.0, t_max=17.0)),
+        SimpleNamespace(**healthy, torque_limit=14.0),
+        SimpleNamespace(**healthy, torque_limit=17.0),
     ]
     arm = SimpleNamespace(
         state=SimpleNamespace(value="enabled"),
         config=SimpleNamespace(joints=[
-            SimpleNamespace(motor_id=1, model="RS00"),
-            SimpleNamespace(motor_id=2, model="RS02"),
+            SimpleNamespace(motor_id=1, model="A"),
+            SimpleNamespace(motor_id=2, model="B"),
         ]),
         motors=motors,
         get_commanded_positions=lambda: [1.0, 0.0],

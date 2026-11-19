@@ -1,0 +1,6 @@
+maker-arm
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The trajectory inverse kinematics (maker_arm/trajectory_ik.py) is a numpy port of the algorithm in
+Dream Labs' dream_ik (its solver, pose smoothing and seam blending), licensed under the Apache
+License, Version 2.0.

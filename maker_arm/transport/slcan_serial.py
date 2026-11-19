@@ -11,7 +11,7 @@ from typing import Callable, Optional
 
 from .base import CanBackend, CanId
 
-log = logging.getLogger("maker_arm.transport")
+log = logging.getLogger(__package__)
 
 
 def slcan_encode(can_id: int, data: bytes, extended: bool = True) -> bytes:
@@ -177,9 +177,6 @@ class SlcanSerialBackend(CanBackend):
                 time.sleep(remain)
             self._ser.write(slcan_encode(can_id, data, extended))
             self._last_tx = time.monotonic()
-
-    def set_recv_callback(self, cb) -> None:
-        self._cb = cb
 
     def _rx_loop(self) -> None:
         parser = SlcanFrameParser()

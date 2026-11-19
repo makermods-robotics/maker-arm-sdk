@@ -1,17 +1,24 @@
 # Zero calibration
 
-Zero calibration is the only supported end-user calibration, identical to MakerModsLab's Maker
-calibration. It never changes model limits, gains, or the Star-to-Maker mapping.
+## The zero pose
+
+Folded against the base, gripper fully closed. Zeroing is the only end-user calibration: limits,
+gains and the Star mapping are model data in the shipped profile.
+
+## Commands
 
 ```bash
-maker-arm zero --all                    # follower
-maker-arm zero --all --star-port PORT   # follower, then the Star leader
+maker-arm zero --all                         # every follower motor
+maker-arm zero --all --star-port PORT        # the follower, then the Star leader in the same pose
 maker-arm zero --leader-only --star-port PORT
-maker-arm zero --motor 4                # one replaced motor
+maker-arm zero --motor 4                     # one replaced motor
 ```
 
-Torque is released for the whole procedure. Move the arm by hand to the ZERO POSE — folded
-against the base, gripper fully closed — and confirm. The command prints the positions before
-and after; the zero is stored in the motors (RobStride set-zero) and in the leader servos
-(FashionStar origin point). A power cycle can reset a motor's multi-turn count; the SDK
-corrects a whole-turn offset automatically at connect.
+Torque stays off for the whole procedure: move the arm to the zero pose by hand and confirm. The
+command prints the positions before and after. The zero is stored in the motors (RobStride
+set-zero) and in the leader servos. Without a terminal, pass `--yes-i-am-at-the-zero-pose`.
+
+## After a power cycle
+
+A power cycle can reset a motor's multi-turn count. `connect()` corrects a reading that is exactly
+one turn off; any other reading outside the limits is a stale zero and `enable()` refuses it.

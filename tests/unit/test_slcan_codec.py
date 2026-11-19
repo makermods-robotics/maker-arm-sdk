@@ -1,6 +1,10 @@
 import pytest
 
-from maker_arm.transport.slcan_serial import SlcanFrameParser, SlcanSerialBackend, slcan_encode
+from conftest import sdk
+
+SlcanFrameParser = sdk.transport.slcan_serial.SlcanFrameParser
+SlcanSerialBackend = sdk.transport.slcan_serial.SlcanSerialBackend
+slcan_encode = sdk.transport.slcan_serial.slcan_encode
 
 
 def test_encode_extended_and_standard_frames():

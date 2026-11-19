@@ -1,21 +1,21 @@
 """Exception types. Low-frequency ops paths raise exceptions; high-frequency control paths only log."""
 
 
-class MakerArmError(Exception):
+class ArmError(Exception):
     pass
 
 
-class ConnectError(MakerArmError):
+class ConnectError(ArmError):
     pass
 
 
-class ParamTimeout(MakerArmError):
+class ParamTimeout(ArmError):
     pass
 
 
-class StateError(MakerArmError):
+class StateError(ArmError):
     pass
 
 
-class FaultLatched(MakerArmError):
+class FaultLatched(ArmError):
     """A command that would clear fault evidence was refused because a fault is latched."""

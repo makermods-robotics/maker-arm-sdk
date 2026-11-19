@@ -4,9 +4,12 @@ import time
 
 import pytest
 
-from fakes import FakeBus, FakeMotor, two_joint_config
-from maker_arm.arm import Arm, ArmState
-from maker_arm.errors import ConnectError, StateError
+import fakes
+from conftest import sdk
+from fakes import FAULT_TEXT, FakeMotor, classify, make_arm, two_joint_config
+
+Arm, ArmState = sdk.arm.Arm, sdk.arm.ArmState
+ConnectError, StateError = sdk.errors.ConnectError, sdk.errors.StateError
 
 
 @pytest.fixture(autouse=True)
@@ -14,11 +17,7 @@ def fast_param_probe(monkeypatch):
     monkeypatch.setattr(Arm, "PARAM_TIMEOUT", 0.005)
 
 
-def make(motors=None, **overrides):
-    motors = motors or [FakeMotor(1, position=0.3), FakeMotor(2, position=-0.5)]
-    bus = FakeBus(motors)
-    arm = Arm(two_joint_config(**overrides), bus)
-    return arm, bus, {m.motor_id: m for m in motors}
+make = make_arm
 
 
 def commands(fake):
@@ -33,7 +32,7 @@ def test_connect_reads_positions_without_touching_torque():
     assert arm.get_joint_positions() == pytest.approx([0.3, -0.5], abs=1e-3)
     assert fakes[1].enabled  # an energized arm is not dropped by connect
     for fake in fakes.values():
-        assert fake.log[0] == "fault_query"
+        assert fake.log[0] == "status_query"
         assert "disable" not in fake.log and "enable" not in fake.log
 
 
@@ -46,25 +45,20 @@ def test_connect_names_missing_motors():
 
 
 def test_connect_keeps_fault_evidence_by_default():
-    arm, _, fakes = make([FakeMotor(1), FakeMotor(2, fault_word=1)])
-    with pytest.raises(ConnectError, match="motor overtemperature"):
+    arm, _, fakes = make([FakeMotor(1), FakeMotor(2, faulted=True)])
+    with pytest.raises(ConnectError, match=FAULT_TEXT):
         arm.connect()
-    assert fakes[2].fault_word == 1
+    assert fakes[2].faulted
     assert "clear" not in fakes[2].log
 
 
 def test_connect_can_clear_faults_explicitly():
-    arm, _, fakes = make([FakeMotor(1), FakeMotor(2, fault_word=1, position=-0.5)])
+    arm, _, fakes = make([FakeMotor(1), FakeMotor(2, faulted=True, position=-0.5)])
     arm.connect(clear_faults=True)
-    assert fakes[2].fault_word == 0 and arm.state is ArmState.CONNECTED
+    assert not fakes[2].faulted and arm.state is ArmState.CONNECTED
 
 
-def test_connect_refuses_motor_not_in_mit_control_mode():
-    arm, _, _ = make([FakeMotor(1), FakeMotor(2, position=-0.5, params_supported=True, run_mode=1)])
-    with pytest.raises(ConnectError, match="RUN_MODE"):
-        arm.connect()
-
-
+@pytest.mark.skipif(not fakes.FULL_TURN_SUPPORTED, reason="the position range cannot show a full-turn offset")
 def test_full_turn_correction_is_applied_per_session():
     arm, _, _ = make([FakeMotor(1, position=0.3 + 2 * math.pi), FakeMotor(2, position=-0.5)])
     arm.connect()
@@ -99,34 +93,28 @@ def test_enable_refuses_hot_gripper():
     assert all("enable" not in f.log for f in fakes.values())
 
 
-def test_gripper_watchdog_armed_only_with_parameter_support_and_restored():
-    gripper = FakeMotor(2, position=-0.5, params_supported=True, can_timeout=0)
-    arm, _, fakes = make([FakeMotor(1, params_supported=True), gripper])
+def sent_torque_frames(fake, since):
+    return [e for e in fake.log[since:] if e in ("enable", "disable") or (isinstance(e, tuple) and e[0] == "cmd")]
+
+
+def test_enable_refuses_motors_that_already_hold_without_sending_them_anything():
+    arm, _, fakes = make([FakeMotor(1, position=0.3, enabled=True, params_supported=True),
+                          FakeMotor(2, position=-0.5, params_supported=True)])
     arm.connect()
-    arm.enable(start_loop=False)
-    assert gripper.can_timeout == 10000          # 500 ms
-    assert fakes[1].can_timeout == 0              # joints: no watchdog, as MakerModsLab
-    arm.disable()
-    assert gripper.can_timeout == 0
-
-
-def test_legacy_firmware_runs_without_watchdog():
-    arm, _, _ = make()
-    arm.connect()
-    arm.enable(start_loop=False)
-    assert arm.state is ArmState.ENABLED
-
-
-def test_enable_rejected_when_mode_does_not_reach_run():
-    class Stubborn(FakeMotor):
-        @property
-        def mode(self):
-            return 0
-    arm, _, fakes = make([FakeMotor(1, params_supported=True), Stubborn(2, position=-0.5, params_supported=True)])
-    arm.connect()
-    with pytest.raises(ConnectError, match="enable rejected"):
+    marks = {k: len(f.log) for k, f in fakes.items()}
+    with pytest.raises(ConnectError, match=r"motors 1 \(j1\) already have torque on.*release"):
         arm.enable(start_loop=False)
-    assert not fakes[1].enabled
+    assert fakes[1].enabled and arm.state is ArmState.CONNECTED
+    assert all(sent_torque_frames(f, marks[k]) == [] for k, f in fakes.items())   # no preload anywhere
+
+
+def test_get_faults_is_zero_for_healthy_enabled_motors():
+    arm, _, _ = make()
+    assert arm.get_faults() == [None, None]
+    arm.connect()
+    arm.enable(start_loop=False)
+    assert arm.get_faults() == [0, 0]
+    arm.disable()
 
 
 # ── control ──
@@ -177,18 +165,6 @@ def test_non_finite_targets_rejected():
     assert not arm.set_joint_targets([math.nan, 0.0])
 
 
-def test_tick_polls_faults_without_clearing():
-    arm, _, fakes = enabled_arm()
-    arm._poll_sent = {1: 0.0, 2: 0.0}
-    fakes[1].log.clear()
-    fakes[2].log.clear()
-    arm._tick(0.005)
-    assert fakes[1].log.count("fault_query") == 1 and "fault_query" not in fakes[2].log
-    arm._tick(0.005)
-    assert fakes[2].log.count("fault_query") == 1    # one motor per tick, round-robin
-    assert "clear" not in fakes[1].log + fakes[2].log
-
-
 # ── protection ──
 def test_gripper_overtemperature_releases_gripper_and_holds_arm():
     arm, _, fakes = enabled_arm()
@@ -202,15 +178,15 @@ def test_gripper_overtemperature_releases_gripper_and_holds_arm():
     assert len(commands(fakes[2])) == sent   # released gripper gets no more commands
 
 
-def test_fault_word_latches_and_holds_pose():
+def test_motor_fault_latches_and_holds_pose():
     arm, _, fakes = enabled_arm()
-    fakes[1].fault_word = 1 << 14
+    fakes[1].faulted = True
     arm._poll_sent = {1: 0.0, 2: 1e9}
-    arm._tick(0.005)   # sends the query; reply latches
+    arm._tick(0.005)   # a status poll or the command reply reports it; the fault latches
     arm._tick(0.005)
-    assert arm.state is ArmState.FAULT and "stall/overload" in arm.fault_reason
+    assert arm.state is ArmState.FAULT and FAULT_TEXT in arm.fault_reason
     assert fakes[1].enabled                   # joints hold instead of dropping
-    assert fakes[1].fault_word == 1 << 14     # evidence kept
+    assert fakes[1].faulted                   # evidence kept
 
 
 def test_feedback_timeout_faults():
@@ -221,23 +197,14 @@ def test_feedback_timeout_faults():
     assert arm.state is ArmState.FAULT and "feedback timeout" in arm.fault_reason
 
 
-def test_modern_firmware_leaving_run_mode_faults():
-    arm, _, fakes = enabled_arm([FakeMotor(1, params_supported=True), FakeMotor(2, position=-0.5)])
-    fakes[1].enabled = False   # motor dropped out of run mode by itself
-    for _ in range(Arm.MODE_FAULT_TICKS):
-        fakes[1].enabled = False
-        arm._tick(0.005)
-    assert arm.state is ArmState.FAULT and "left run mode" in arm.fault_reason
-
-
 def test_clear_faults_releases_and_clears():
     arm, _, fakes = enabled_arm()
-    fakes[1].fault_word = 1
+    fakes[1].faulted = True
     arm._poll_sent = {1: 0.0, 2: 1e9}
     arm._tick(0.005)
     arm._tick(0.005)
     arm.clear_faults()
-    assert arm.state is ArmState.CONNECTED and fakes[1].fault_word == 0
+    assert arm.state is ArmState.CONNECTED and not fakes[1].faulted
     assert all(m.fault_latched is None for m in arm.motors)
 
 
@@ -278,7 +245,7 @@ def test_unverified_return_keeps_holding():
         arm._synced = [True, True]
         arm.set_joint_targets([1.0, -0.5])
         time.sleep(0.15)
-        fakes[1].track = False   # joint can no longer move (blocked)
+        fakes[1].track = False   # the joint is blocked
         assert arm.stop() is False
         assert arm.state is ArmState.ENABLED and fakes[1].enabled
     finally:
@@ -300,7 +267,7 @@ def test_already_at_rest_releases_immediately():
 # ── regressions from the independent review ──
 def test_second_fault_while_holding_is_still_handled():
     arm, _, fakes = enabled_arm()
-    fakes[1].fault_word = 1
+    fakes[1].faulted = True
     arm._poll_sent = {1: 0.0, 2: 1e9}
     arm._tick(0.005)
     arm._tick(0.005)
@@ -354,7 +321,7 @@ def test_estop_during_enable_cancels_it():
         arm = None
 
         def handle(self, can_id, data):
-            if data == bytes.fromhex("fffffffffffffffc"):
+            if classify(can_id, data)[0] == "enable":
                 threading.Thread(target=self.arm.estop).start()
                 time.sleep(0.02)
             return super().handle(can_id, data)
@@ -379,7 +346,7 @@ def test_send_error_keeps_the_loop_holding_the_other_joints():
         failed = []
 
         def flaky(can_id, data, extended=True):
-            if can_id == 1 and data[:6] != bytes([0xFF] * 6) and not failed:
+            if classify(can_id, data) == ("command", 1) and not failed:
                 failed.append(True)
                 raise OSError("USB hiccup")
             return original(can_id, data, extended)
@@ -394,26 +361,10 @@ def test_send_error_keeps_the_loop_holding_the_other_joints():
         arm.disconnect()
 
 
-def test_unconfirmed_disable_keeps_gripper_watchdog():
-    class DropsDisable(FakeMotor):
-        def handle(self, can_id, data):
-            if data == bytes.fromhex("fffffffffffffffd"):
-                return []
-            return super().handle(can_id, data)
-
-    gripper = DropsDisable(2, position=-0.5, params_supported=True)
-    arm, _, _ = make([FakeMotor(1, params_supported=True), gripper])
-    arm.connect()
-    arm.enable(start_loop=False)
-    arm.disable()
-    assert arm.unconfirmed_disable == [2]
-    assert gripper.can_timeout == 10000   # not removed while the gripper may still be enabled
-
-
 def test_enable_refused_when_neutral_preload_is_not_acknowledged():
     class IgnoresCommandsWhileDisabled(FakeMotor):
         def handle(self, can_id, data):
-            if data[:6] != bytes([0xFF] * 6) and can_id & 0x700 == 0 and not self.enabled:
+            if classify(can_id, data)[0] == "command" and not self.enabled:
                 return []
             return super().handle(can_id, data)
 
@@ -427,26 +378,19 @@ def test_enable_refused_when_neutral_preload_is_not_acknowledged():
 def test_refresh_never_erases_a_new_fault():
     arm, _, fakes = make()
     arm.connect()
-    fakes[1].fault_word = 1 << 14
+    fakes[1].faulted = True
     fakes[1].log.clear()
     assert arm.refresh() == [False, True]
-    assert fakes[1].fault_word == 1 << 14 and "clear" not in fakes[1].log
+    assert fakes[1].faulted and "clear" not in fakes[1].log
 
 
+@pytest.mark.skipif(not fakes.WARNING_SUPPORTED, reason="the protocol has no warning flag")
 def test_gripper_warning_flag_is_a_fault():
     arm, _, fakes = enabled_arm(joints=[
         two_joint_config().joints[0],
         replace(two_joint_config().joints[1], warning_is_fault=True),
     ])
-    original = fakes[2].feedback
-
-    def warned():
-        cid, data = original()
-        data = bytearray(data)
-        data[6] |= 0x10
-        return cid, bytes(data)
-
-    fakes[2].feedback = warned
+    fakes[2].warning = True
     arm._tick(0.005)
     assert arm.state is ArmState.FAULT and "warning" in arm.fault_reason
     assert not fakes[2].enabled
@@ -468,7 +412,7 @@ def test_released_gripper_disable_is_retried_after_a_lost_frame():
     dropped = []
 
     def drop_first_disable(can_id, data, extended=True):
-        if can_id == 2 and data == bytes.fromhex("fffffffffffffffd") and not dropped:
+        if classify(can_id, data) == ("disable", 2) and not dropped:
             dropped.append(True)
             return None
         return original(can_id, data, extended)
@@ -487,7 +431,7 @@ def test_disable_sends_torque_off_even_if_neutral_command_fails():
     original = bus.send
 
     def no_commands(can_id, data, extended=True):
-        if data[:6] != bytes([0xFF] * 6) and can_id & 0x700 == 0:
+        if classify(can_id, data)[0] == "command":
             raise OSError("command path broken")
         return original(can_id, data, extended)
 
@@ -503,7 +447,7 @@ def test_offline_motor_does_not_delay_torque_off_to_the_others():
     original = bus.send
 
     def record(can_id, data, extended=True):
-        if data == bytes.fromhex("fffffffffffffffd"):
+        if classify(can_id, data)[0] == "disable":
             order.append((can_id, time.monotonic()))
         return original(can_id, data, extended)
 
@@ -546,3 +490,37 @@ def wait(predicate, seconds=2.0):
     while time.monotonic() < deadline and not predicate():
         time.sleep(0.005)
     return predicate()
+
+
+# ── float mode ──
+def test_a_fault_while_floating_restores_profile_gains_at_the_measured_pose():
+    arm, _, fakes = enabled_arm()
+    arm.float_mode(extra_torque=lambda q, v: [0.5, 0.5])
+    assert arm._profile_gains == [(60, 2.0), (20, 0.5)]   # float_mode leaves the profile untouched
+    fakes[1].position = 0.4   # moved by hand while floating
+    arm._tick(0.005)
+    arm._enter_fault("j1: overcurrent")
+    assert [(j.kp, j.kd) for j in arm.config.joints] == [(60, 2.0), (20, 0.5)]
+    assert arm._extra_torque is None and arm.state is ArmState.FAULT
+    assert arm.get_commanded_positions()[0] == pytest.approx(0.4, abs=1e-3)
+    arm._tick(0.005)
+    position, kp, tau = fakes[1].frames[-1]
+    assert kp == pytest.approx(60, abs=0.1) and position == pytest.approx(0.4, abs=1e-3) and tau == pytest.approx(0, abs=0.05)
+    arm.disable()
+
+
+def test_losing_gravity_while_floating_is_a_fault_that_holds():
+    class Broken:
+        n = 1
+
+        def torques(self, *args):
+            raise RuntimeError("model blew up")
+
+    arm, _, fakes = enabled_arm()
+    arm.float_mode()
+    arm._gravity = Broken()
+    arm._tick(0.005)
+    assert arm.state is ArmState.FAULT and "gravity" in arm.fault_reason
+    assert [j.kp for j in arm.config.joints] == [60, 20]
+    assert fakes[1].frames[-1][1] == pytest.approx(60, abs=0.1)   # this tick's frame already holds
+    arm.disable()

@@ -9,8 +9,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
-from .protocol import fault_text
-
 
 
 @dataclass(frozen=True)
@@ -93,8 +91,8 @@ class MotorStateRecorder:
         "elapsed_s", "wall_time", "payload_kg", "joint", "motor_id", "model",
         "leader_target_rad", "command_rad", "position_rad", "error_rad",
         "velocity_rad_s", "torque_nm", "torque_fraction", "temperature_c",
-        "mode", "fault_word", "fault_text", "feedback_age_s",
-        "stall_candidate", "stall_confirmed", "fault_status_age_s",
+        "enabled", "status_code", "fault_text", "feedback_age_s",
+        "stall_candidate", "stall_confirmed", "status_age_s",
     ]
 
     def __init__(self, path: Path, payload_kg: float, arm, thresholds: StallThresholds):
@@ -130,10 +128,9 @@ class MotorStateRecorder:
 
         for index, (joint, motor) in enumerate(zip(self.arm.config.joints, self.arm.motors)):
             feedback = motor.feedback
-            mode = feedback.mode if feedback else -1
-            status = motor.fault_status
-            fault_word = status.word if status else None
-            faulted = bool(motor.fault_latched) or bool(fault_word)
+            enabled = "" if feedback is None or feedback.enabled is None else int(feedback.enabled)
+            status = motor.status
+            faulted = bool(motor.fault_latched) or bool(status and status.has_fault)
             error = commanded[index] - positions[index]
             candidate = self.detector.update(
                 elapsed_s,
@@ -145,17 +142,17 @@ class MotorStateRecorder:
                 faulted=faulted,
                 enabled=getattr(getattr(self.arm, "state", None), "value", None) == "enabled",
             )
-            torque_limit = max(abs(motor.params.t_min), abs(motor.params.t_max))
+            torque_limit = motor.torque_limit
             peak = self.peaks[joint.motor_id]
             peak["max_abs_error_rad"] = max(peak["max_abs_error_rad"], abs(error))
             peak["max_abs_torque_nm"] = max(peak["max_abs_torque_nm"], abs(torques[index]))
             peak["max_temperature_c"] = max(peak["max_temperature_c"], temperatures[index])
-            samples.append((index, joint, motor, mode, fault_word, error, torque_limit, candidate))
+            samples.append((index, joint, motor, enabled, status, error, torque_limit, candidate))
 
         confirmed = {event.motor_id for event in self.detector.events}
         wall_time = datetime.now().astimezone().isoformat(timespec="milliseconds")
-        for index, joint, motor, mode, fault_word, error, torque_limit, candidate in samples:
-            status_text = motor.fault_latched or fault_text(fault_word)
+        for index, joint, motor, enabled, status, error, torque_limit, candidate in samples:
+            status_text = motor.fault_latched or (status.text if status else "")
             self._writer.writerow({
                 "elapsed_s": f"{elapsed_s:.6f}",
                 "wall_time": wall_time,
@@ -171,10 +168,10 @@ class MotorStateRecorder:
                 "torque_nm": f"{torques[index]:.7f}",
                 "torque_fraction": f"{abs(torques[index]) / torque_limit:.6f}",
                 "temperature_c": f"{temperatures[index]:.2f}",
-                "mode": mode,
-                "fault_word": "" if fault_word is None else f"0x{fault_word:08X}",
+                "enabled": enabled,
+                "status_code": "" if status is None else f"0x{status.code:08X}",
                 "fault_text": status_text,
-                "fault_status_age_s": f"{motor.fault_age:.6f}",
+                "status_age_s": f"{motor.status_age:.6f}",
                 "feedback_age_s": f"{motor.feedback_age:.6f}",
                 "stall_candidate": int(candidate),
                 "stall_confirmed": int(joint.motor_id in confirmed),

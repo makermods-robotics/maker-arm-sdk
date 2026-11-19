@@ -51,7 +51,7 @@ def test_feedback_decode_masks_status_bits_out_of_temperature():
     assert fb.mode == 2 and fb.warning_flag and not fb.fault_flag
 
 
-def test_legacy_feedback_reads_mode_zero_and_true_temperature():
+def test_old_feedback_reads_mode_zero_and_true_temperature():
     data = bytearray(feedback_bytes(1, temp=35.0))
     assert data[6] >> 4 == 0
     fb = p.parse_frame(p.HOST_CAN_ID, bytes(data))

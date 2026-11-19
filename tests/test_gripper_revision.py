@@ -1,5 +1,4 @@
 """Physical-consistency checks for the local designer-asset revision."""
-import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import zipfile

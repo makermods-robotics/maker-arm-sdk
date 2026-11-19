@@ -14,12 +14,11 @@ import subprocess
 import time
 
 from maker_arm import protocol as p
-from maker_arm.cli.common import add_backend_args, backend_kwargs
+from maker_arm.cli.common import add_arm_args, target
 from maker_arm.config import ArmConfig
 from maker_arm.errors import FaultLatched, ParamTimeout
-from maker_arm.motor import Motor
-from maker_arm.profiles import DEFAULT_ARM_CONFIG
-from maker_arm.transport.base import CanBackend, create_backend
+from maker_arm.motor import Motor, route
+from maker_arm.transport.base import CanBackend
 
 SAMPLES = 20
 
@@ -55,8 +54,7 @@ def gripper_joint(config: ArmConfig):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", default=str(DEFAULT_ARM_CONFIG))
-    add_backend_args(ap)
+    add_arm_args(ap)
     ap.add_argument("--pose", required=True)
     ap.add_argument("--gap-mm", required=True, type=float)
     ap.add_argument("--output", required=True, type=Path)
@@ -65,9 +63,10 @@ def main():
         ap.error("Gap must be between 0 and 104.825 mm")
     if a.output.exists():
         ap.error("Output already exists; choose a new capture filename")
-    config = ArmConfig.from_yaml(a.config)
+    t = target(a)
+    config = t.config()
     joint = gripper_joint(config)
-    kw = backend_kwargs(a)
+    kw = t.spec.backend_kwargs()
     if "port" in kw:
         try:
             occupied = subprocess.run(["lsof", "-t", kw["port"]], capture_output=True, text=True)
@@ -75,30 +74,30 @@ def main():
                 ap.error("Adapter is in use by PID(s): " + occupied.stdout.strip())
         except FileNotFoundError:
             pass
-    be = ReadOnlyBackend(create_backend(a.backend, **kw), joint.motor_id)
-    motor = Motor(joint.motor_id, be, p.MOTOR_PARAMS[joint.model])
+    be = ReadOnlyBackend(t.backend(), joint.motor_id)
+    motor = Motor(joint, be, config.host_id)
     raw_replies = []
 
     def receive(cid, data):
-        if p.reply_motor_id(cid, data) != joint.motor_id:
+        if route(cid, data, config.host_id) != joint.motor_id:
             return
         msg = p.parse_frame(cid, data, motor.params, config.host_id)
         if isinstance(msg, (p.MotorFeedback, p.FaultStatus)):
             raw_replies.append({"utc": datetime.now(timezone.utc).isoformat(),
                                 "kind": type(msg).__name__,
                                 "can_id": hex(cid), "data_hex": bytes(data).hex()})
-        motor.handle_frame(msg)
+        motor.handle_frame(cid, data)
 
     be.set_recv_callback(receive)
     samples = []
     be.open()
     try:
         try:
-            status = motor.query_fault(timeout=0.1, attempts=3)
+            status = motor.check(timeout=0.1, attempts=3)
         except ParamTimeout:
             raise SystemExit(f"gripper motor {joint.motor_id} did not answer the fault query")
         if status.has_fault:
-            raise SystemExit(f"gripper motor {joint.motor_id} reports fault 0x{status.word:08X} "
+            raise SystemExit(f"gripper motor {joint.motor_id} reports fault 0x{status.code:08X} "
                              f"({status.text}); not reading, fault kept for inspection")
         for _ in range(SAMPLES):
             try:
@@ -114,8 +113,8 @@ def main():
     median = statistics.median(samples)
     result = {"pose": a.pose, "gap_mm_user_reported": a.gap_mm,
               "motor_id": joint.motor_id,
-              "motor_identity_basis": f"{Path(a.config).name}; confirm by gripper-only movement",
-              "backend": a.backend, "backend_kwargs": {k: v for k, v in kw.items() if k in ("port", "channel")},
+              "motor_identity_basis": f"{Path(t.profile or t.spec.profile or 'shipped profile').name}; confirm by gripper-only movement",
+              "backend": t.spec.backend, "backend_kwargs": {k: v for k, v in kw.items() if k in ("port", "channel")},
               "protocol": "MIT, standard 11-bit CAN, 1 Mbps",
               "source": "MIT feedback position", "units": "radians",
               "median_rad": median, "median_deg": math.degrees(median),

@@ -1,6 +1,8 @@
 import pytest
 
-from maker_arm.cli.check import choose_test_delta
+from conftest import sdk
+
+choose_test_delta = sdk.cli.check.choose_test_delta
 
 
 def test_choose_delta_prefers_larger_available_side():

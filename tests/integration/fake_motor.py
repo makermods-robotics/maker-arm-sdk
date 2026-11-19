@@ -1,7 +1,9 @@
-"""Simulated MIT motors on a vcan interface, reusing the in-memory simulator from tests/fakes.py."""
+"""Simulated motors on a vcan interface, reusing the in-memory simulator from tests/fakes.py."""
 
-from fakes import FakeMotor
-from maker_arm.transport.socketcan import SocketCanBackend
+from conftest import sdk
+from fakes import FakeMotor, respond
+
+SocketCanBackend = sdk.transport.socketcan.SocketCanBackend
 
 
 class FakeMotorFleet:
@@ -26,10 +28,5 @@ class FakeMotorFleet:
         self._be.close()
 
     def _on_frame(self, can_id, data) -> None:
-        if getattr(can_id, "extended", False):
-            return
-        m = self.motors.get(can_id & 0x7F)
-        if m is None or can_id == 0xFD:   # ignore our own replies
-            return
-        for cid, payload in m.handle(can_id, data):
+        for cid, payload in respond(self.motors, can_id, data):
             self._be.send(cid, payload, extended=False)

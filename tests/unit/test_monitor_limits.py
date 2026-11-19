@@ -1,5 +1,4 @@
 import math
-import pytest
 
 from tools.engineering.calibration.capture_maker_limits import compute_limits, update_yaml_limits
 

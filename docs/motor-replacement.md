@@ -5,7 +5,7 @@
 3. Factory preparation of the replacement (done once, before it joins the arm):
    - set its CAN ID to the joint's ID (1–7) with RobStride's Motor Studio, and
    - switch it from the private protocol to MIT with
-     `python tools/experimental/lerobot/switch_protocol.py --ids ID --to mit`, then power-cycle.
+     `python tools/engineering/switch_protocol.py --ids ID --to mit`, then power-cycle.
    The SDK only speaks MIT, so a motor still on the private protocol never answers `scan`.
 4. Install the linkage and put the arm in the zero pose (folded against the base, gripper fully
    closed).

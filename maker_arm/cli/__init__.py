@@ -1,1 +1,1 @@
-"""Installed command-line interface for supported maker-arm workflows."""
+"""Installed command-line interface for the supported workflows."""

@@ -1,7 +1,9 @@
 # Maker Arm URDF
 
-Load [`robot.urdf`](robot.urdf) directly, keeping the adjacent `meshes/` folder.
-No ZIP extraction or viewer is needed. Mesh paths are relative to this URDF.
+The URDF ships with the package as [`maker_arm/urdf/robot.urdf`](../../maker_arm/urdf/robot.urdf)
+(the SDK's kinematics and gravity feed-forward read it from there). The meshes stay in
+[`meshes/`](meshes); the URDF's mesh paths are relative to its own location and point here, so it
+loads directly from a checkout.
 
 The model contains six revolute arm joints and a symmetric sliding gripper.
 Set `gripper_left_joint` from **0 to 0.0524125 metres**; `gripper_right_joint`

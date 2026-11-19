@@ -24,8 +24,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from maker_arm.arm import Arm
-from maker_arm.cli.common import add_backend_args, arm_from_args
-from maker_arm.profiles import DEFAULT_ARM_CONFIG
+from maker_arm.cli.common import add_arm_args, target
 from maker_arm.protocol import fault_text
 
 
@@ -400,8 +399,7 @@ class EncoderInspector:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", default=str(DEFAULT_ARM_CONFIG))
-    add_backend_args(ap)
+    add_arm_args(ap)
     ap.add_argument("--poll-hz", type=float, default=10.0)
     ap.add_argument("--history-seconds", type=float, default=30.0)
     ap.add_argument("--movement-threshold", type=float, default=0.002,
@@ -418,7 +416,7 @@ def main() -> None:
 
     # Read-only: faults are reported and kept (connect() fails on a faulted motor; clear it
     # explicitly with `maker-arm scan --clear-faults` once the cause is fixed).
-    arm = arm_from_args(a)
+    arm = target(a).build()
     arm.connect()
     root = tk.Tk()
     app = EncoderInspector(root, arm, a.poll_hz, a.history_seconds,

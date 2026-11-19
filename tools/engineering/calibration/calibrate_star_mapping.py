@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Star -> Maker mapping calibration (LeRobot-style ``{servo, direction, range_deg}``), both arms unpowered.
+"""Star -> Maker mapping calibration (``{servo, direction, range_deg}``), both arms unpowered.
 
 The mapping has no offset: ``follower_deg = unwrap(leader_raw_deg) * direction``. It is only
 valid when both arms read zero in the same pose (folded against the base, gripper fully
@@ -11,8 +11,7 @@ closed). This tool therefore
    ``direction = follower_deg / leader_deg`` relative to the zero pose.
 
 ``range_deg`` is kept from the mapping file unless ``--range-from-profile`` is given, which
-writes the follower profile's limits truncated to integer degrees (as LeRobot's
-MakerFollowerConfig.joint_limits). The follower torque stays released throughout.
+writes the follower profile's limits truncated to integer degrees. The follower torque stays released throughout.
 """
 
 import argparse
@@ -20,9 +19,8 @@ import json
 import math
 import time
 
-from maker_arm.cli.common import add_backend_args, arm_from_args
+from maker_arm.cli.common import add_arm_args, target
 from maker_arm.mapping import JointMapper
-from maker_arm.profiles import DEFAULT_ARM_CONFIG
 
 ZERO_TOLERANCE_DEG = 5.0      # leader reading at the zero pose
 MIN_LEADER_TRAVEL_DEG = 15.0  # second pose must move each joint at least this far
@@ -90,8 +88,7 @@ def measure_direction(leader0, leader1, follower0_rad, follower1_rad,
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", default=str(DEFAULT_ARM_CONFIG))
-    add_backend_args(ap)
+    add_arm_args(ap)
     ap.add_argument("--star-port", required=True)
     ap.add_argument("--out", required=True,
                     help="mapping JSON to modify; no production profile is selected implicitly")
@@ -104,7 +101,7 @@ def main():
     entries = existing["joints"]
     from motorbridge_smart_servo import FashionStarServo
     bus = FashionStarServo(a.star_port, baudrate=1_000_000)
-    arm = arm_from_args(a)
+    arm = target(a).build()
     try:
         if len(entries) != arm.config.n_joints:
             raise SystemExit(f"mapping has {len(entries)} joints, profile has {arm.config.n_joints}")

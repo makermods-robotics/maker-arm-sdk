@@ -18,7 +18,7 @@ def _frame_id(can_id: int, extended: bool) -> int:
 
 
 _FRAME = struct.Struct("=IB3x8s")  # can_id | dlc | pad | data
-log = logging.getLogger("maker_arm.transport")
+log = logging.getLogger(__package__)
 
 
 class SocketCanBackend(CanBackend):
@@ -52,9 +52,6 @@ class SocketCanBackend(CanBackend):
         frame = _FRAME.pack(_frame_id(can_id, extended), len(data), data.ljust(8, b"\x00"))
         with self._tx_lock:
             self._sock.send(frame)
-
-    def set_recv_callback(self, cb) -> None:
-        self._cb = cb
 
     def _rx_loop(self) -> None:
         while self._running:

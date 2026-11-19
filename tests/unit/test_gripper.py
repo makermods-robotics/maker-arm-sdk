@@ -2,7 +2,9 @@ import math
 
 import pytest
 
-from maker_arm.gripper import CAPPED_CLOSING_KD, GripperHold
+from conftest import sdk
+
+CAPPED_CLOSING_KD, GripperHold = sdk.gripper.CAPPED_CLOSING_KD, sdk.gripper.GripperHold
 
 LIMITS = (math.radians(-96.0), math.radians(-2.5))
 

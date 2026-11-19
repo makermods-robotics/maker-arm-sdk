@@ -1,11 +1,11 @@
-# Factory calibration development
+# Calibration development
 
-- `capture_maker_limits.py`: manually characterize follower mechanical endpoints; writes
-  backed-off `limits_deg: [lo, hi]` into an explicitly selected profile.
-- `capture_star_ranges.py`: characterize Star leader servo endpoints (raw degrees).
-- `calibrate_star_mapping.py`: measure the LeRobot-style Star mapping (`{servo, direction,
-  range_deg}`, no offset) after checking both arms read zero in the same pose; optionally set
-  `range_deg` from the follower profile limits.
-- `artifacts/`: raw measurements retained as provenance for a named arm.
+- `capture_maker_limits.py`: characterize the follower's mechanical endpoints and write backed-off
+  `limits_deg: [lo, hi]` into the profile given with `--config`.
+- `capture_star_ranges.py`: characterize the Star leader's servo endpoints (raw degrees).
+- `calibrate_star_mapping.py`: measure the Star mapping (`{servo, direction, range_deg}`) after
+  checking both arms read zero in the same pose; `--range-from-profile` takes `range_deg` from the
+  follower limits.
+- `artifacts/`: raw measurements for a named arm.
 
-Motor replacement uses `maker-arm zero --motor ID`; it does not use these tools.
+A replaced motor only needs `maker-arm zero --motor ID`, not these tools.

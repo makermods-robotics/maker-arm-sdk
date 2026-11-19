@@ -1,45 +1,37 @@
 #!/usr/bin/env python3
-"""Lesson 2: enable and hold in place for 30 seconds. For first power-on trial runs / tuning kp kd. ⚠️ Make sure the area is clear of obstacles."""
+"""Enable at the current pose, hold it, then return to rest and release. Keep the area clear.
 
+    python examples/02_enable_hold.py [--arm NAME] [--seconds 10]
+"""
+
+import argparse
 import time
 
-from maker_arm.cli.common import arm_from_args, make_parser
-from maker_arm.cli.safety import release_if_holding, require_interactive_terminal
-
-
-def _safe(fn):
-    try:
-        fn()
-    except Exception as e:
-        print(f"cleanup step failed (continuing): {e}")
+from maker_arm.rig import Rig
 
 
 def main():
-    ap = make_parser(__doc__)
-    ap.add_argument("--seconds", type=float, default=30.0)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--arm", help="arm name from the rig file (default: the first arm)")
+    ap.add_argument("--seconds", type=float, default=10.0)
     a = ap.parse_args()
-    require_interactive_terminal("powered hold")
-    arm = arm_from_args(a)
+    rig = Rig.load()
+    arm = rig.arm(a.arm or rig.names(["all"])[0])
     arm.connect()
     try:
-        input("about to enable (holding in place, there should be no motion). Confirm and press ENTER > ")
+        input("support the arm, then press ENTER to enable (no motion expected) > ")
         arm.enable()
-        t_end = time.monotonic() + a.seconds
-        while time.monotonic() < t_end and arm.state.name == "ENABLED":
-            time.sleep(0.2)
-            print(" ".join(f"J{i+1}={x:+7.3f}" for i, x in enumerate(arm.get_joint_positions())), flush=True)
-        if arm.state.name == "FAULT":
-            print("FAULT:", arm.fault_reason)
+        deadline = time.monotonic() + a.seconds
+        while time.monotonic() < deadline and arm.state.name == "ENABLED":
+            time.sleep(0.1)
+        if arm.fault_reason:
+            print("fault:", arm.fault_reason)
     except KeyboardInterrupt:
         pass
     finally:
-        torque_was_enabled = arm.state.name in ("ENABLED", "FAULT")
-        _safe(lambda: release_if_holding(arm))
-        _safe(arm.disconnect)
-        if torque_was_enabled:
-            print("torque released, exiting")
-        else:
-            print("torque was not enabled; transport closed without sending disable")
+        if not arm.stop():   # return to rest, then release; False: still holding where it is
+            input("return to rest not verified; support the arm and press ENTER to release > ")
+        arm.disconnect()
 
 
 if __name__ == "__main__":

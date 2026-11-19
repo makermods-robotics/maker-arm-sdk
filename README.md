@@ -1,144 +1,240 @@
 # maker-arm
 
-Python SDK and command-line tools for the Maker Arm v1: six RobStride joints plus an RS00
-gripper, teleoperated in absolute coordinates from a Star 102 leader.
-
-Officially supported platforms:
-
-- Linux using SocketCAN.
-- macOS using a serial SLCAN adapter.
-
-The SDK speaks only the RobStride **MIT protocol** (standard 11-bit CAN at 1 Mbps) and drives
-the arm exactly as MakerModsLab does through its LeRobot `MakerFollower`: the same joint
-limits, models and gains, the same zero pose, the same Star leader mapping, and the same
-safety behaviour (see [Safety](#safety)). An arm set up and zeroed in MakerModsLab works with
-the SDK unchanged, and the other way round. Close MakerModsLab before using the SDK: only one
-program can use the CAN adapter at a time.
-
-Limits, models, gains and the Star mapping are fixed model data in `maker_arm/profiles/`.
-End users only set the zero pose, after assembly or a motor replacement. See
-[MIT protocol](docs/mit-protocol.md) for wire details.
+Python SDK and command-line tool for the Maker Arm: six RobStride joints and a gripper, driven over
+CAN from Linux, macOS or Windows. The [`metal-arm`](https://github.com/makermods-robotics/metal-arm-sdk) SDK drives the Metal Arm with the same
+API and the same commands.
 
 ## Install
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
-maker-arm --help
-maker-arm doctor
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[cameras]"
+maker-arm doctor                    # checks the computer; talks to no motor
 ```
 
-## Supported commands
+Pick the CAN adapter you have:
 
-```text
-maker-arm doctor       inspect dependencies, adapters, and profiles (does not contact motors)
-maker-arm scan         find motors: position, temperature, and fault status
-maker-arm zero         set the zero pose (follower, optionally the Star leader)
-maker-arm check        run a bounded powered response check
-maker-arm teleop       teleoperate from the Star 102 leader
-```
-
-Defaults follow the platform: SocketCAN `can0` on Linux, serial SLCAN on macOS with the
-USB CAN adapter found automatically when exactly one is plugged in (`--port` otherwise).
-
-## Linux
-
-For a serial SLCAN dongle, create `can0` at 1 Mbps:
+| Adapter | How to use it |
+|---|---|
+| candleLight / gs_usb (USB) | `--backend gs_usb`. Needs libusb (`apt install libusb-1.0-0` or `brew install libusb`; bundled on Windows) and, on Linux, the udev rule below. |
+| SocketCAN (Linux) | `--backend socketcan --channel can0`, after `sudo ip link set can0 up type can bitrate 1000000`. |
+| Serial SLCAN | `--backend slcan --port /dev/ttyACM0` (`COM3` on Windows). Runs the arm at 25 Hz. |
 
 ```bash
-sudo bash scripts/linux/setup_slcan.sh /dev/ttyACM0 can0
-maker-arm scan
-maker-arm teleop --star-port /dev/ttyUSB0
+# Linux, once: let non-root users open gs_usb adapters
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", MODE="0666"' |
+  sudo tee /etc/udev/rules.d/99-gs-usb.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Native SocketCAN adapters only need a configured `can0`; they do not use the SLCAN setup script.
-See `docs/linux.md`.
+## First run
 
-## macOS
+The arm has no brakes: it drops when torque goes off away from its rest pose. Keep the workspace
+clear.
 
 ```bash
-ls /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null
-maker-arm scan
-maker-arm teleop --star-port /dev/cu.usbserial-LEADER --record-motor-states
+maker-arm ports                          # 1. what is plugged in: adapters, cameras, serial ports
+maker-arm rig init --detect              # 2. write the rig file: arm1, arm2, camera1, ...
+maker-arm cameras snapshot               # 3. look at the JPEGs to see which camera is overhead
+maker-arm identify --assign --top camera1    # 4. wiggle each gripper; names the arms left / right
+maker-arm scan --arm left                # 5. motors 1-7: position, temperature, faults
+maker-arm hold --arm left --for 5        # 6. torque on for 5 s, then back to rest and off
+maker-arm check --arm left --at shoulder_lift=-20,elbow_flex=25 --sine 10    # 7. lift, then a tracking test
 ```
 
-Serial SLCAN defaults to the verified 25 Hz control/update rate and waits for fresh feedback
-from each motor before commanding the next. This is required by older
-`normaldotcom/canable-fw`, whose unbuffered USB path can otherwise hide motors 4–7.
-See `docs/macos.md`.
+The rig file (`~/.config/maker-arm/rig.yaml`) names your arms, cameras and leaders, so every command
+takes `--arm left`. Without a rig file, pass `--backend` and `--port` or `--channel`.
 
-## Zero calibration and motor replacement
+A new arm, or one with a replaced motor, needs its zero set once:
+[docs/zero-calibration.md](docs/zero-calibration.md).
 
-The zero pose is the one MakerModsLab uses: **folded against the base, gripper fully closed**.
-Torque is released, you move the arm there by hand, and the zero is stored in the motors:
+## Commands
 
-```bash
-maker-arm zero --all                       # whole follower
-maker-arm zero --all --star-port PORT      # follower, then the Star leader in the same pose
-maker-arm zero --motor 4                   # one replaced motor
-maker-arm check --motor 4
+Every command takes `--json` and `--help`.
+
+**Look, without touching motors**
+
+| Command | What it does |
+|---|---|
+| `doctor` | Check the computer, the profile and the rig file. |
+| `ports` | List CAN adapters, cameras and serial ports. |
+| `rig` | `show`, `init --detect`, `set-arm`, `set-camera`, `set-leader`: edit the rig file. |
+| `cameras` | `list`, `snapshot` (one JPEG per camera), `stream` (measure frame rate). |
+| `fk` | Tool pose for given joints, or for the arm's current joints. |
+| `ik` | Joints for a tool pose, or for a short tool path (`--to-xyz ... --steps N`). |
+
+**Read motors (never enables them)**
+
+| Command | What it does |
+|---|---|
+| `scan` | Find motors by ID: position, temperature, faults. |
+| `status` | Position, velocity, torque, temperatures and faults per joint. `--watch` repeats. |
+| `params` | `list`, `get NAME`, `set NAME VALUE`: motor parameters. |
+
+**Move the arm (torque on)**
+
+| Command | What it does |
+|---|---|
+| `identify` | Wiggle each gripper and use the cameras to tell which arm is left or right. |
+| `hold` | Hold the current pose until Ctrl-C or `--for S`. |
+| `move` | `--joint NAME --to DEG` or `--by DEG`, `--pose zero`, or the tool point: `--xyz X Y Z`, `--dxyz DX DY DZ`. |
+| `check` | Jog each joint and report PASS/FAIL. `--sine DEG` runs a tracking test; `--at` lifts first. |
+| `gravity` | Float the arm so you can move it by hand. `--check` compares the gravity model with measured torque. |
+| `teleop` | Follow a Star leader (`--star-port`) or a second arm (`--leader arm --leader-arm NAME`). |
+| `leader` | Star leader: `zero` sets its origin, `read` prints what it would command. |
+
+These commands end with `--then rest` (return to where the arm started, then torque off; the usual
+default), `--then stay` (exit with torque on) or `--then release` (torque off where it is). If the
+return to rest cannot be confirmed, the arm keeps holding and the command exits with status 1.
+
+**Change the motors**
+
+| Command | What it does |
+|---|---|
+| `release` | Torque off on an arm that was left on. It drops if it is not at rest. |
+| `clear-faults` | Clear motor faults once the cause is fixed. |
+| `zero` | Make the current pose the zero. Stored in the motors. |
+| `set-id` | Not supported on RobStride motors: set IDs with RobStride Motor Studio. |
+
+## Python
+
+```python
+import math, time
+from maker_arm.rig import Rig
+
+arm = Rig.load().arm("left")
+arm.connect()                                   # finds the motors; torque stays off
+print(dict(zip(arm.joint_names, arm.get_joint_positions())))    # radians
+
+arm.enable()                                    # torque on, holding the current pose
+start = arm.get_joint_positions()
+for i in range(200):                            # 4 s: swing wrist_roll by 10 degrees
+    q = list(start)
+    q[5] += math.radians(10) * math.sin(math.pi * i / 50)
+    arm.set_joint_targets(q)
+    time.sleep(0.02)
+
+xyz, rpy = arm.ee_pose()                        # tool point: metres, radians
+arm.move_ee([xyz[0], xyz[1], xyz[2] + 0.03])    # straight up 3 cm
+arm.stop()                                      # back to rest, then torque off
+arm.disconnect()
 ```
 
-Motor IDs (1–7) and the one-time switch of a new motor from RobStride's private protocol to
-MIT are factory steps; see `docs/motor-replacement.md`.
+Units are radians, rad/s, N·m, °C and metres. Joints are ordered `shoulder_pan, shoulder_lift,
+elbow_flex, wrist_flex, wrist_yaw, wrist_roll, gripper`.
+
+| You want to | Call |
+|---|---|
+| Send targets from your own loop | `arm.set_joint_targets(q)` |
+| Move and wait | `arm.move_to(q)`, `arm.move_ee(xyz, rpy)` |
+| Read the arm | `get_joint_positions()`, `get_joint_velocities()`, `get_joint_torques()`, `get_temperatures()`, `status()`, `ee_pose()` |
+| Hand-guide it | `arm.float_mode()`, then `arm.set_gains()` to stiffen again |
+| Stop | `arm.stop()` (rest, then off), `arm.disable()` (off now), `arm.estop()` |
+| Use two arms | `Rig.load().group(["left", "right"])` |
+
+Once enabled, the arm runs its own 200 Hz loop. It keeps targets inside the joint limits, limits
+speed, adds gravity compensation, and holds the pose if anything faults.
+
+### Your own teleoperation loop
+
+```python
+import time
+from maker_arm.leaders import StarLeader
+from maker_arm.rig import Rig
+
+arm = Rig.load().arm("left")
+leader = StarLeader("/dev/ttyUSB0")
+leader.connect()
+arm.connect()
+arm.enable()
+try:
+    while arm.state.name == "ENABLED":          # a fault ends the loop; the arm then holds
+        q = leader.read()                       # joint targets in radians, or None on a missed read
+        if q is not None:
+            arm.set_joint_targets(q)
+        time.sleep(1 / 50)
+finally:
+    arm.stop()
+    arm.disconnect()
+    leader.close()
+```
+
+`maker_arm.teleop.Teleop` is the complete version (slow start when the poses differ, speed limit,
+leader loss). `ArmLeader(other_arm)` makes a second arm the leader.
+
+### Tool poses from a policy
+
+`IKStream` turns chunks of tool poses into joint commands. Each chunk continues smoothly from the
+commands already sent, and no joint moves more than its speed limit allows in one tick, so a small
+tool move is always a small joint move.
+
+```python
+import numpy as np
+from maker_arm.trajectory_ik import IKStream, TrajectoryIK
+
+ik = TrajectoryIK.from_config(arm.config, chain=arm.chain)
+stream = IKStream(ik, np.array(arm.get_commanded_positions()[:6]), rate_hz=20)
+
+result = stream.feed(poses)                     # poses: (T, 4, 4) tool poses at 20 Hz
+for q in result.q:                              # (T, 6) joint commands
+    arm.set_joint_targets(list(q) + [gripper])
+    time.sleep(1 / 20)
+```
+
+`stream.step(pose)` solves one pose at a time. `arm.move_ee` uses the same solver. The algorithm is
+Dream Labs' `dream_ik`, ported to numpy; see [`NOTICE`](NOTICE).
+
+### Cameras
+
+```python
+with Rig.load().camera("top") as cam:
+    frame, stamp = cam.read()                   # BGR image, time in seconds
+```
+
+Camera ids (`usb:<path>`) stay the same while a camera stays in the same USB port. On Windows cameras
+are not listed; name one by its index, `index:0`.
+
+More runnable code is in [`examples/`](examples).
 
 ## Safety
 
-The SDK mirrors MakerModsLab's Maker arm behaviour:
+- **No brakes.** The arm drops when torque goes off away from rest.
+- **Stopping returns to rest first.** Torque goes off only after the arm is confirmed back where it
+  started. Otherwise it keeps holding and waits for you to type `RELEASE`.
+- **A fault holds the arm in place.** Stale feedback, a motor fault or 55 °C on the gripper
+  stops motion; the gripper lets go, the other joints hold.
+- **If the program is killed,** joints 1-6 keep holding their last command and the gripper lets go
+  after 0.5 s. Run `maker-arm release` to turn torque off.
+- **Keep a hardware emergency stop** on motor power.
 
-- **Read-only connect.** Every motor gets a non-clearing fault query first. A reported fault is
-  shown decoded and kept for inspection; `maker-arm scan --clear-faults` clears it explicitly.
-  Connecting never enables or releases torque.
-- **Enable from the measured pose.** Each motor is preloaded with a zero-gain command at its
-  present position before enable, so an old setpoint cannot jump the arm. A joint more than
-  20° outside its limits after full-turn correction (stale zero) refuses to enable.
-- **Startup sync.** Until a joint has caught up with its target, its command stays within 1° of
-  the measured position (synced within 3°, or released if it cannot move for 1 s). Targets
-  are always clipped to the joint limits.
-- **Gravity feed-forward.** MIT frames on joints 1–6 carry the URDF model's holding torque, eased
-  in over 0.5 s after enable and capped per joint. It uses the measured pose while every joint has
-  replied within 150 ms, else the commanded pose. It assumes a table-mounted arm with no payload.
-  Set `gravity_scale` in the profile or pass `--gravity-scale` (0..1.2, 0 = off).
-- **Faults are latched.** A fault word or feedback fault flag stops the arm holding its current
-  pose (no drop) and fault-clearing commands are refused until an explicit `clear_faults()`.
-  Feedback older than 250 ms is a fault. Fault status is polled every 250 ms without clearing.
-  Health checks keep running while holding, so a second failing motor is still caught; a faulted
-  joint is no longer commanded.
-- **Gripper holding and protection** (MakerModsLab's default gripper hold): closing effort is
-  capped at 1 Nm and, on contact, the grip is regulated to 0.5 Nm instead of squeezing at full
-  gain. It stops at 55 °C, will not enable unless below 45 °C, and stops on its warning or fault
-  flag; a faulted or hot gripper is released rather than held. A 500 ms motor watchdog is armed
-  on firmware that supports it (RS00 >= 0.0.3.27) and removed only after torque-off is confirmed.
-- **Verified return to rest.** Stopping returns the joints (not the gripper) to the pose they had
-  at enable at 30°/s and releases torque only once they arrive. If the return cannot be
-  verified, the arm keeps holding until the operator types `RELEASE`.
-- Joints 1–6 have no motor watchdog (as in MakerModsLab): if the host dies they hold their
-  last command. Always support the arm before enable, fault recovery or torque release.
+More: [docs/safety.md](docs/safety.md).
 
-Read `docs/safety.md` before powered operation.
+## Hardware
 
-## Telemetry and stall detection
+| Joint | Motor ID | Model | Limits (deg) |
+|---|---|---|---|
+| shoulder_pan | 1 | RS00 | -158.2 .. 156.1 |
+| shoulder_lift | 2 | RS02 | -175.3 .. -3.2 |
+| elbow_flex | 3 | RS02 | 2.8 .. 236.1 |
+| wrist_flex | 4 | RS00 | -65.2 .. 104.0 |
+| wrist_yaw | 5 | RS00 | -97.6 .. 78.0 |
+| wrist_roll | 6 | RS00 | -153.2 .. 152.0 |
+| gripper | 7 | RS00 | -96.0 .. -2.5 (closes toward 0) |
 
-Add `--record-motor-states` to teleoperation to create a CSV plus summary JSON under `logs/`.
-The recorder captures targets, rate-limited commands, position error, velocity, measured torque,
-temperature, mode, faults, and feedback age for all seven motors. A confirmed persistent stall
-freezes leader following and leaves the arm holding until the operator types `RELEASE`.
+RobStride motors on the MIT protocol, classic CAN at 1 Mbit/s, host ID 0xFD.
 
-## Engineering and experimental tools
-
-- `tools/diagnostics/`: read-only inspection, backend benchmarking, and bounded motor diagnosis.
-- `tools/engineering/calibration/`: factory range capture and mapping work; these can overwrite
-  production calibration and are intentionally not installed as public commands.
-- `tools/experimental/lerobot/`: the factory private-to-MIT protocol switch.
-
-See `tools/README.md` and `docs/engineering-tools.md`.
+Zero pose: folded against the base, gripper fully closed. The arm's limits, gains and tool point are in
+[`maker_arm/profiles/maker_arm_v1.yaml`](maker_arm/profiles/maker_arm_v1.yaml). The tool point comes from the Dream IK spec;
+check it on your arm before relying on Cartesian moves. Wire protocol: [docs/mit-protocol.md](docs/mit-protocol.md). Replacing a motor: [docs/motor-replacement.md](docs/motor-replacement.md).
 
 ## Development
 
 ```bash
+pip install -e ".[dev]"
 python -m pytest -q
+python tools/sync_shared.py --check ../metal-arm-sdk      # shared files must be identical
 ```
 
-Linux vcan integration tests run when a `vcan0` interface is available. CI covers Linux and
-macOS; hardware acceptance remains a separate operator-run step.
+Most of this package is shared, byte for byte, with `metal-arm-sdk`. Only `_product.py`,
+`protocol.py`, `motor.py`, `profiles/` and `urdf/` belong to this arm. Edit shared files in
+`maker-arm-sdk` and copy them over with `tools/sync_shared.py --copy-to ../metal-arm-sdk`.

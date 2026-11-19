@@ -1,4 +1,6 @@
-from maker_arm.transport.socketcan import CAN_EFF_FLAG, _frame_id
+from conftest import sdk
+
+CAN_EFF_FLAG, _frame_id = sdk.transport.socketcan.CAN_EFF_FLAG, sdk.transport.socketcan._frame_id
 
 
 def test_frame_id_extended_sets_eff_flag():

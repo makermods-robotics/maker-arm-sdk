@@ -1,7 +1,7 @@
 # MIT wire protocol
 
-The SDK speaks only RobStride's MIT protocol: classic CAN, **standard 11-bit IDs, 1 Mbps**,
-matching MakerModsLab and its LeRobot RobStride driver. Commands go to arbitration ID = motor
+The SDK speaks only RobStride's MIT protocol: classic CAN, **standard 11-bit IDs, 1 Mbps**.
+Commands go to arbitration ID = motor
 ID. Replies come back on the host ID `0xFD` with the motor ID in payload byte 0; typed
 parameter replies come back on `0x300|id` (read) or `0x400|id` (write).
 
@@ -29,7 +29,7 @@ access. Ranges: RS00 ±33 rad/s, ±14 Nm; RS02 ±44 rad/s, ±17 Nm (LeRobot type
 
 ## Fault status
 
-Five bytes (legacy) or zero-padded eight bytes: motor ID, then a LE uint32 fault word. Bits:
+Five bytes (old firmware) or zero-padded eight bytes: motor ID, then a LE uint32 fault word. Bits:
 0 overtemperature, 1 driver chip, 2 undervoltage, 3 overvoltage, 4/5/16 phase B/C/A
 overcurrent, 7 encoder uncalibrated, 8 hardware identification, 9 position initialization,
 14 stall/overload.
@@ -38,8 +38,7 @@ overcurrent, 7 encoder uncalibrated, 8 hardware identification, 9 position initi
 
 `0x7005` RUN_MODE (must be 0 = MIT control) and `0x7028` CAN timeout (20 ticks per ms). The
 SDK arms a 500 ms CAN timeout on the gripper only, verifies it, and restores the previous
-value on disable — exactly as MakerModsLab. On firmware without parameter access it logs a
-warning and runs without it, as MakerModsLab does.
+value on disable. On firmware without parameter access it logs a warning and runs without it.
 
 RS02 firmware <= 0.2.2.11 maps position to ±12.5 rad instead of ±12.57; the SDK assumes the
 newer range, so check J2/J3 firmware during bring-up.
@@ -47,7 +46,7 @@ newer range, so check J2/J3 firmware during bring-up.
 ## Private protocol
 
 New RobStride motors ship on the private 29-bit protocol. Switching to MIT is a one-time
-factory step (`tools/experimental/lerobot/switch_protocol.py`, then a power cycle). A motor
+factory step (`tools/engineering/switch_protocol.py`, then a power cycle). A motor
 still on the private protocol does not answer the SDK.
 
 Sources: RobStride RS00/RS02 manuals 260713 section 6; makermods-robotics/lerobot@5ce2fe41a

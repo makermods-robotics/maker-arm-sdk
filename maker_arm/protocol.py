@@ -1,9 +1,8 @@
 """RobStride MIT wire protocol (standard 11-bit CAN, 1 Mbps): pure encode/decode, zero IO.
 
-This is the only protocol the SDK speaks, matching MakerModsLab and its LeRobot RobStride
-driver. Every frame is a classic standard-ID frame addressed to the motor ID (1..127).
-Replies arrive on the host ID (0xFD) with the motor ID in payload byte 0; typed parameter
-replies arrive on 0x300|id (read) or 0x400|id (write).
+Every frame is a classic standard-ID frame addressed to the motor ID (1..127). Replies arrive on
+the host ID (0xFD) with the motor ID in payload byte 0; typed parameter replies arrive on
+0x300|id (read) or 0x400|id (write).
 
 Sources: RobStride RS00/RS02 manuals 260713 section 6; LeRobot RobStride driver
 (makermods-robotics/lerobot@5ce2fe41a); MakerModsLab maker_fault_diagnostics.py and
@@ -61,7 +60,7 @@ OP_ENABLE = 0xFC
 OP_DISABLE = 0xFD
 OP_SET_ZERO = 0xFE
 
-# MIT fault word bits (LE uint32 in the fault-status reply), per MakerModsLab.
+# MIT fault word bits (LE uint32 in the fault-status reply), source: MakerModsLab.
 FAULT_BITS = {
     0: "motor overtemperature",
     1: "driver chip fault",
@@ -209,7 +208,7 @@ def parse_frame(can_id: int, data: bytes, params: MotorParams = RS00,
                 host_id: int = HOST_CAN_ID):
     """Decode one received frame; anything that is not an MIT reply returns None.
 
-    Fault-status replies are five bytes on legacy firmware and zero-padded to eight on newer
+    Fault-status replies are five bytes on old firmware and zero-padded to eight on newer
     firmware. A motion sample with the same padding signature (temperature 0.0 °C, mode 0) is
     conservatively treated as status so a late fault reply can never become an encoder sample.
     """
@@ -230,7 +229,7 @@ def parse_frame(can_id: int, data: bytes, params: MotorParams = RS00,
     v = (data[3] << 4) | (data[4] >> 4)
     t = ((data[4] & 0xF) << 8) | data[5]
     # Byte 6 carries mode (bits 7-6) and fault/warning flags (bits 5-4) above the 12-bit
-    # temperature. Legacy firmware leaves those bits zero for any real temperature, so masking
+    # temperature. Old firmware leaves those bits zero for any real temperature, so masking
     # is correct for both layouts.
     status = data[6]
     return MotorFeedback(

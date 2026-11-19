@@ -1,5 +1,7 @@
-from maker_arm.transport.base import CanBackend, create_backend
-from maker_arm.transport.mock import MockBackend
+from conftest import sdk
+
+CanBackend, create_backend = sdk.transport.base.CanBackend, sdk.transport.base.create_backend
+MockBackend = sdk.transport.mock.MockBackend
 
 
 def test_mock_records_and_injects():

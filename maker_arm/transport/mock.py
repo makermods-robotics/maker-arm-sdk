@@ -27,9 +27,6 @@ class MockBackend(CanBackend):
             for cid, d in (self.responder(can_id, data) or []):
                 self._cb(cid, d)
 
-    def set_recv_callback(self, cb) -> None:
-        self._cb = cb
-
     def inject(self, can_id: int, data: bytes, extended: bool = True) -> None:
         if self._cb:
             self._cb(CanId(can_id, extended), data)
