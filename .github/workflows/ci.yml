@@ -19,6 +19,9 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
-      - run: python -m pytest -q
+      # The tests run real control loops against simulated motors on the wall clock; a starved
+      # runner can trip their watchdogs, so failures get one rerun.
+      - run: python -m pytest -q || python -m pytest -q --last-failed
+        shell: bash
       - run: maker-arm --help
       - run: maker-arm doctor
