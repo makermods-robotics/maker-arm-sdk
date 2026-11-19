@@ -17,3 +17,7 @@ for _info in pkgutil.walk_packages(sdk.__path__, f"{_PACKAGE}."):
         importlib.import_module(_info.name)
     except ImportError:   # a backend whose optional dependency is missing
         pass
+
+# The control loop spaces frames on a real bus by spinning the CPU; with simulated motors that
+# only starves the other threads, so the tests switch it off.
+sdk.arm.Arm._busy_wait_us = staticmethod(lambda us: None)
