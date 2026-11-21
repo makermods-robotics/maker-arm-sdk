@@ -160,6 +160,20 @@ def test_targets_are_clipped_to_limits():
     assert arm.get_commanded_positions() == pytest.approx([2.0, -0.04])
 
 
+def test_enable_speed_caps_the_pull_inside_a_limit_until_the_first_target():
+    arm, _, _ = make([FakeMotor(1, position=2.2), FakeMotor(2, position=-0.5)])
+    arm.connect()
+    with pytest.raises(ValueError, match="positive"):
+        arm.enable(start_loop=False, speed=0.0)
+    arm.enable(start_loop=False, speed=0.5)
+    arm._synced = [True, True]
+    arm._tick(0.1)
+    assert arm.get_commanded_positions()[0] == pytest.approx(2.2 - 0.05, abs=1e-3)
+    arm.set_joint_targets(arm.get_commanded_positions())
+    arm._tick(0.1)
+    assert arm.get_commanded_positions()[0] == pytest.approx(2.0, abs=1e-3)
+
+
 def test_non_finite_targets_rejected():
     arm, _, _ = enabled_arm()
     assert not arm.set_joint_targets([math.nan, 0.0])

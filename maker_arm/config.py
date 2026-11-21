@@ -49,6 +49,7 @@ class JointConfig:
     warning_is_fault: bool = False  # treat the feedback warning flag as a fault
     hold_torque_nm: Optional[float] = None  # gripper holding-effort regulation (see gripper.py)
     closing_direction: int = 1      # gripper: sign of joint motion that closes the jaws
+    open_position: Optional[float] = None   # gripper: rad, jaws fully open (None: the limit away from closing)
     reply_id: Optional[int] = None  # CAN ID the motor replies on, where the protocol has one
     # Model (URDF) and feed-forward, see the module docstring.
     urdf_sign: int = 1                  # ±1: URDF angle = joint * urdf_sign + urdf_offset
@@ -177,6 +178,11 @@ class ArmConfig:
                 raise ValueError(f"motor {j.motor_id}: hold_torque_nm must be in [0.1, 2.0]")
             if j.closing_direction not in (1, -1):
                 raise ValueError(f"motor {j.motor_id}: closing_direction can only be ±1")
+            if j.open_position is not None and not (
+                    math.isfinite(j.open_position) and j.lo <= j.open_position <= j.hi
+                    and j.open_position != (j.hi if j.closing_direction > 0 else j.lo)):
+                raise ValueError(f"motor {j.motor_id}: open_position must lie within the limits, off the closed end, "
+                                 f"got {j.open_position}")
             if (j.max_temperature_c is not None and j.enable_temperature_c is not None
                     and not j.enable_temperature_c < j.max_temperature_c):
                 raise ValueError(f"motor {j.motor_id}: enable_temperature_c must be below max_temperature_c")

@@ -216,3 +216,36 @@ def test_group_exit_keeps_holding_when_a_stiff_joint_would_drop_on_its_watchdog(
         assert a.state.name == "ENABLED" and a._running and fa[1].enabled
     finally:
         a.disable()
+
+
+def test_group_close_reports_each_arm(monkeypatch):
+    arms, motors = two_arms()
+    group = ArmGroup(arms)
+    group.connect()
+    group.enable()
+    monkeypatch.setattr(arms["b"], "stop", lambda: False)
+    assert group.close() == {"a": "released", "b": "detached"}
+    assert arms["a"].state.name == arms["b"].state.name == "DISCONNECTED"
+    assert not any(motors[f"a{i}"].enabled for i in (1, 2)) and motors["b1"].enabled
+
+
+def test_group_close_reports_an_arm_left_energized_by_an_earlier_process():
+    a, _, fa = make_arm([FakeMotor(1, position=0.3, params_supported=True, enabled=True),
+                         FakeMotor(2, position=-0.5, params_supported=True, enabled=True)])
+    b, _, _ = make_arm([FakeMotor(1, position=0.3, params_supported=True),
+                        FakeMotor(2, position=-0.5, params_supported=True)])
+    group = ArmGroup({"a": a, "b": b})
+    group.connect()
+    assert group.close() == {"a": "energized", "b": "released"}
+    assert fa[1].enabled and fa[2].enabled
+
+
+def test_group_close_reports_an_unconfirmed_release(monkeypatch):
+    arms, motors = two_arms()
+    group = ArmGroup(arms)
+    group.connect()
+    group.enable()
+    motors["a2"].online = False
+    monkeypatch.setattr(arms["a"], "_return_to_rest", lambda rest=None: True)
+    assert group.close() == {"a": "unknown", "b": "released"}
+    assert ArmGroup(arms).close() == {"a": "unknown", "b": "unknown"}   # never connected: nothing confirmed

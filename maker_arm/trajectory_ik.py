@@ -11,6 +11,7 @@ to the margined limits, then the command steps toward it under the per-joint spe
 most-limited joint so its direction is kept: no tick moves a joint more than ``max_speed / rate_hz``.
 
 Poses are 4x4 tool poses in the chain's world frame; joints are the chain's joint coordinates (rad).
+``from_config`` returns this solver or the same interface on Dream Labs' compiled JAX solver (trajectory_ik_jax.py).
 """
 
 from __future__ import annotations
@@ -289,6 +290,17 @@ class TrajectoryIK:
             q[t], capped[t] = prev, scale < 1.0
         return q, capped
 
+    def _check_inputs(self, targets, q_last) -> tuple[np.ndarray, np.ndarray]:
+        targets = np.asarray(targets, dtype=float)
+        if targets.ndim != 3 or targets.shape[1:] != (4, 4) or not len(targets):
+            raise ValueError(f"targets must be (T, 4, 4), got {targets.shape}")
+        if not np.all(np.isfinite(targets)):
+            raise ValueError("targets must be finite")
+        q_last = np.asarray(q_last, dtype=float)
+        if q_last.shape != (self.n,) or not np.all(np.isfinite(q_last)):
+            raise ValueError(f"q_last must be {self.n} finite values")
+        return targets, q_last
+
     # ── the solves ──
     def solve_tick(self, target: np.ndarray, q_prev, lo=None, hi=None) -> np.ndarray:
         """One pose from the previous tick's solution ``q_prev``: the per-tick costs, clipped to [lo, hi]
@@ -319,14 +331,7 @@ class TrajectoryIK:
         ``q_before``: the commands before it, (dof,) or (rows, dof) newest first; two rows also set the jerk into
         the chunk; None = the arm was still. ``speed_cap`` (rad/s) lowers the arm's speeds. ``method`` "traj"
         solves the chunk as one problem, "tick" tick by tick."""
-        targets = np.asarray(targets, dtype=float)
-        if targets.ndim != 3 or targets.shape[1:] != (4, 4) or not len(targets):
-            raise ValueError(f"targets must be (T, 4, 4), got {targets.shape}")
-        if not np.all(np.isfinite(targets)):
-            raise ValueError("targets must be finite")
-        q_last = np.asarray(q_last, dtype=float)
-        if q_last.shape != (self.n,) or not np.all(np.isfinite(q_last)):
-            raise ValueError(f"q_last must be {self.n} finite values")
+        targets, q_last = self._check_inputs(targets, q_last)
         max_step = self.max_step(rate_hz, speed_cap)
         lo, hi = self.bounds(q_last)
         warm, prev = np.empty((len(targets), self.n)), q_last
@@ -447,6 +452,24 @@ class IKStream:
         q, _ = self.ik.cap(solution[None], self.q_last, self.ik.max_step(self.rate_hz, self.speed_cap))
         self._sent(q, solution)
         return q[0]
+
+
+SOLVERS = ("auto", "numpy", "jax")
+
+
+def from_config(config, chain: Optional[Chain] = None, solver: str = "auto",
+                weights: Optional[IKWeights] = None) -> TrajectoryIK:
+    """The trajectory IK for an arm profile (see ``TrajectoryIK.from_config``): ``solver`` "numpy" (or "auto") this
+    module's, "jax" Dream Labs' compiled solver (``trajectory_ik_jax``, the ``jax`` extra; ImportError naming it when
+    not installed). JAX is used only when asked for: importing it sets process-wide JAX settings. It compiles on its
+    first solve of each chunk length (tens of seconds; ``warmup`` does it ahead), then solves a chunk faster: for a
+    long-running loop, not a one-off move."""
+    if solver not in SOLVERS:
+        raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
+    if solver != "jax":
+        return TrajectoryIK.from_config(config, weights, chain)
+    from . import trajectory_ik_jax
+    return trajectory_ik_jax.JaxTrajectoryIK.from_config(config, weights, chain)
 
 
 # ── tool paths ──

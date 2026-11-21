@@ -40,6 +40,7 @@ def test_only_the_gripper_has_watchdog_and_temperature_protection():
     *arm_joints, gripper = config.joints
     assert (gripper.can_timeout_ms, gripper.max_temperature_c, gripper.enable_temperature_c) == (500, 55, 45)
     assert gripper.release_on_fault and not gripper.return_to_rest
+    assert math.degrees(gripper.open_position) == pytest.approx(-96.0)   # the open limit
     for j in arm_joints:
         assert j.can_timeout_ms is None and j.max_temperature_c is None
         assert j.return_to_rest and not j.release_on_fault

@@ -166,6 +166,12 @@ class Motor:
         """Reason a fault was latched, or None."""
         return self._latched
 
+    @property
+    def watchdog_released(self) -> bool:
+        """Does the motor report only the state its CAN watchdog leaves after commands stopped?
+        Never on RobStride: the timeout puts it in reset mode with no fault, which reads as torque off."""
+        return False
+
     def reset_cache(self) -> None:
         self._feedback = None
         self._fb_time = None

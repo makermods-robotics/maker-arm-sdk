@@ -58,3 +58,15 @@ joints:
     assert cfg.rest_pose == pytest.approx([math.radians(10)])
     with pytest.raises(ValueError, match="rest_pose"):
         ArmConfig(rest_pose=[0.0, 0.0], joints=cfg.joints)._validate()
+
+
+def test_gripper_open_position_in_degrees_inside_the_limits(tmp_path):
+    cfg = ArmConfig.from_yaml(write(tmp_path, """
+joints:
+  - {name: gripper, motor_id: 1, limits_deg: [0, 120], kp: 10, kd: 1, closing_direction: -1, open_position_deg: 100}
+"""))
+    assert cfg.joints[0].open_position == pytest.approx(math.radians(100))
+    for bad in (1.5, -0.1, 0.0, math.nan):   # outside the limits, or the closed end
+        with pytest.raises(ValueError, match="open_position"):
+            ArmConfig(joints=[JointConfig(motor_id=1, lo=0.0, hi=1.0, kp=1, kd=1, closing_direction=-1,
+                                          open_position=bad)])._validate()

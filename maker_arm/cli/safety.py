@@ -57,8 +57,8 @@ def leave_holding(arm, say: Callable = print) -> str:
         arm.disable()
         return released(arm)
     releasing = arm.detach()
-    say(f"arm left holding with torque on: {detached_text(arm, releasing)}. Support it, then run "
-        f"'{CLI_NAME} release'")
+    say(f"arm left holding with torque on: {detached_text(arm, releasing)}. Run '{CLI_NAME} rest' to "
+        f"bring it down ('{CLI_NAME} release' turns torque off where it is: the arm drops)")
     return "holding"
 
 

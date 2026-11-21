@@ -23,7 +23,7 @@ from .check import choose_test_delta
 from .common import (CliError, Interrupt, Target, add_yes_arg, confirm, joint_position, load_rig, make_parser,
                      run, targets)
 from . import ports
-from .release import release_motor
+from ..bus import release_motor
 
 MAX_KP = 20.0       # the gripper's gain during the wiggle (lower if the profile's is lower)
 STEPS = 40          # ramp steps each way

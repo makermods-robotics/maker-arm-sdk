@@ -22,11 +22,11 @@ from typing import Callable, Optional
 
 from .._product import CLI_NAME
 from ..arm import Arm
-from ..config import ArmConfig, JointConfig
-from ..errors import ArmError, FaultLatched, ParamTimeout
+from ..bus import Bus, joint_position  # noqa: F401
+from ..config import ArmConfig
+from ..errors import ArmError
 from ..gravity import MAX_GRAVITY_SCALE
 from ..leaders.base import LeaderError
-from ..motor import Motor, route
 from ..rig import BACKENDS, ArmGroup, ArmSpec, Rig, default_backend
 from ..transport.base import CanBackend
 from .safety import detached_text, release_if_holding, released
@@ -149,7 +149,7 @@ def add_then_arg(ap: argparse.ArgumentParser, default: str, choices=("rest", "st
     ap.add_argument("--then", choices=choices, default=default,
                     help="afterwards: rest = verified return to rest, then release; stay = exit leaving "
                          "torque on (a joint with a motor watchdog, the gripper, releases once it times out; "
-                         "release the rest later with the release command); release = torque off where it is"
+                         "bring it down later with the rest command); release = torque off where it is (the arm drops)"
                          + ("; hold = keep holding until Ctrl-C, then rest" if "hold" in choices else ""))
 
 
@@ -333,8 +333,8 @@ def finish(arm: Arm, then: str, out: Out) -> str:
         return "not_enabled"
     if then == "stay":
         releasing = arm.detach()
-        out.say(f"leaving torque on: {detached_text(arm, releasing)}. Release it with "
-                f"'{CLI_NAME} release' before you touch it.")
+        out.say(f"leaving torque on: {detached_text(arm, releasing)}. Bring it down with "
+                f"'{CLI_NAME} rest' before you touch it.")
         return "stay"
     if then == "release":
         out.say("releasing torque where the arm is")
@@ -343,6 +343,11 @@ def finish(arm: Arm, then: str, out: Out) -> str:
             out.warn(f"torque off not confirmed on motors {arm.unconfirmed_disable}; cut motor power if they hold")
         return released(arm)
     return release_if_holding(arm, say=out.say)
+
+
+def rest_command(name: str) -> str:
+    """The command that brings arm ``name`` (a rig name, or "arm" when unnamed) down and releases it."""
+    return f"{CLI_NAME} rest" + ("" if name == "arm" else f" --arm {name}")
 
 
 def group_of(chosen: list[Target]) -> ArmGroup:
@@ -369,90 +374,13 @@ def wind_down(group: ArmGroup, then: str, out: Out) -> dict[str, str]:
                 if arm.state.name in ("ENABLED", "FAULT"):
                     releasing = arm.detach()
                     out.warn(f"{name}: left holding with torque on: {detached_text(arm, releasing)}. "
-                             f"Support it, then run '{CLI_NAME} release'")
+                             f"Run '{rest_command(name)}' to bring it down")
                     outcome[name] = "holding"
                 else:
                     arm.disconnect()
             except Exception as e:
                 log.error("%s: closing the bus failed: %s", name, e)
     return outcome
-
-
-# ── read-only motor access (never enables, never clears unless asked) ──
-def joint_position(joint: JointConfig, motor_position: float) -> float:
-    return (motor_position - joint.offset) * joint.direction
-
-
-class Bus:
-    """The motors of one profile on their bus, without an Arm: fault queries and state reads only.
-    Works when a motor reports a fault (Arm.connect refuses then) and never changes torque."""
-
-    def __init__(self, backend: CanBackend, config: ArmConfig, ids: Optional[list[int]] = None):
-        self.backend, self.config = backend, config
-        joints = {j.motor_id: j for j in config.joints}
-        ids = list(joints) if ids is None else ids
-        self.joints = {i: joints.get(i) or JointConfig(motor_id=i, lo=-math.pi, hi=math.pi, kp=0.0, kd=0.0)
-                       for i in ids}
-        self.motors = {i: Motor(j, backend, config.host_id) for i, j in self.joints.items()}
-        self.known = set(joints)
-
-    def _receive(self, can_id, data) -> None:
-        m = self.motors.get(route(can_id, data, self.config.host_id))
-        if m is not None:
-            m.handle_frame(can_id, data)
-
-    def __enter__(self) -> "Bus":
-        self.backend.set_recv_callback(self._receive)
-        try:
-            self.backend.open()
-        except Exception as e:
-            raise CliError(f"could not open the CAN adapter: {e}. Close other programs using it and retry.") from e
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.backend.close()
-
-    def read(self, motor_id: int, clear: bool = False, timeout: float = 0.1) -> Optional[dict]:
-        """One motor's state in joint coordinates, or None when it does not answer."""
-        m, j = self.motors[motor_id], self.joints[motor_id]
-        try:
-            status = m.check(timeout=timeout, attempts=2)
-        except ParamTimeout:
-            return None
-        cleared = False
-        if status.has_fault and clear:
-            m.clear_fault()
-            time.sleep(0.01)
-            status = m.check(timeout=timeout, attempts=2)
-            cleared = True
-        fb = None
-        if not status.has_fault:
-            try:
-                fb = m.read_state(timeout=timeout / 2, attempts=3)
-            except (ParamTimeout, FaultLatched):
-                pass
-        fault = (status.text or f"code 0x{status.code:X}") if status.has_fault else m.fault_latched
-        row = {"motor_id": motor_id, "joint": j.name if motor_id in self.known else None,
-               "position": None, "velocity": None, "torque": None, "temperature": None, "temperatures": {},
-               "enabled": None, "fault": fault, "fault_code": status.code if status.has_fault else 0,
-               "cleared": cleared, "outside_limits": False}
-        if fb is not None:
-            q = joint_position(j, fb.position)
-            row.update(position=q, velocity=fb.velocity * j.direction, torque=fb.torque * j.direction,
-                       temperature=fb.temperature, temperatures=dict(fb.temperatures), enabled=fb.enabled)
-            if motor_id in self.known:
-                grace = self.config.full_turn_grace
-                row["outside_limits"] = not any(j.lo - grace <= q + k <= j.hi + grace
-                                                for k in (0.0, -2 * math.pi, 2 * math.pi))
-        return row
-
-    def read_all(self, clear: bool = False) -> list[dict]:
-        rows = [self.read(i, clear) for i in self.motors]
-        return [r for r in rows if r is not None]
-
-    def missing(self, rows: list[dict]) -> list[int]:
-        found = {r["motor_id"] for r in rows}
-        return [i for i in self.motors if i in self.known and i not in found]
 
 
 # ── formatting ──

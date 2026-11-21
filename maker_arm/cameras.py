@@ -131,6 +131,29 @@ def resolve(camera_id: Union[str, int]) -> Union[int, str]:
 
 
 # ── capture ──
+class Frame(tuple):
+    """A captured frame. Unpacks as ``(image, stamp)``, ``stamp`` the wall-clock capture time (s);
+    ``captured`` is the time.monotonic() capture time and ``age_s`` the seconds since, which a
+    wall-clock step cannot change."""
+
+    def __new__(cls, image, stamp: float, captured: float) -> "Frame":
+        frame = super().__new__(cls, (image, stamp))
+        frame.captured = captured
+        return frame
+
+    @property
+    def image(self):
+        return self[0]
+
+    @property
+    def stamp(self) -> float:
+        return self[1]
+
+    @property
+    def age_s(self) -> float:
+        return max(0.0, time.monotonic() - self.captured)
+
+
 class Camera:
     """One camera captured on a background thread; the newest frame is kept, a dead camera reopened."""
 
@@ -142,6 +165,7 @@ class Camera:
         self.reopens = 0
         self._frame = None
         self._stamp = 0.0
+        self._captured = 0.0
         self._count = 0
         self._cond = threading.Condition()
         self._stop = threading.Event()
@@ -211,7 +235,7 @@ class Camera:
                 last_frame = now
                 self.error = None
                 with self._cond:
-                    self._frame, self._stamp = frame, time.time()
+                    self._frame, self._stamp, self._captured = frame, time.time(), now
                     self._count += 1
                     self._cond.notify_all()
             elif now - last_frame > READ_FAILURE_S:
@@ -231,22 +255,28 @@ class Camera:
             except Exception:
                 pass
 
-    def read(self, timeout: float = 1.0):
-        """The next new frame and its wall-clock timestamp (s); TimeoutError if none comes."""
+    def read(self, timeout: float = 1.0) -> Frame:
+        """The next new frame as a Frame, ``(image, wall-clock stamp)``; TimeoutError if none comes."""
         with self._cond:
             seen = self._count
             if not self._cond.wait_for(lambda: self._count > seen or not self.is_open, timeout):
                 raise TimeoutError(f"no frame from camera {self.id} within {timeout} s")
             if self._count == seen:
                 raise RuntimeError(f"camera {self.id} is closed")
-            return self._frame, self._stamp
+            return Frame(self._frame, self._stamp, self._captured)
+
+    def newest(self, max_age_s: Optional[float] = None) -> Optional[Frame]:
+        """The newest frame as read() gives it (no wait), or None when there is none or it is older
+        than ``max_age_s`` (judged on the monotonic clock)."""
+        with self._cond:
+            if self._frame is None or (max_age_s is not None and time.monotonic() - self._captured > max_age_s):
+                return None
+            return Frame(self._frame, self._stamp, self._captured)
 
     def latest(self, max_age_s: Optional[float] = None):
         """The newest frame (no wait), or None when there is none or it is older than ``max_age_s``."""
-        with self._cond:
-            if self._frame is None or (max_age_s is not None and time.time() - self._stamp > max_age_s):
-                return None
-            return self._frame
+        newest = self.newest(max_age_s)
+        return None if newest is None else newest[0]
 
     def snapshot(self, path, max_age_s: float = 0.5) -> Path:
         """Save the current picture (the newest frame, or the next one if that is stale) to ``path``."""

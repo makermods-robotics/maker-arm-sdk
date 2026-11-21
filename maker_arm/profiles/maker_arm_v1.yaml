@@ -50,3 +50,4 @@ joints:
     warning_is_fault: true
     hold_torque_nm: 0.5
     closing_direction: 1
+    open_position_deg: -96.0   # fully open: the open limit

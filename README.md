@@ -91,7 +91,8 @@ return to rest cannot be confirmed, the arm keeps holding and the command exits 
 
 | Command | What it does |
 |---|---|
-| `release` | Torque off on an arm that was left on. It drops if it is not at rest. |
+| `rest` | Move to the rest pose and turn torque off; an arm left on is taken over where it holds. |
+| `release` | Torque off where the arm is: it drops unless it is at rest or supported. |
 | `clear-faults` | Clear motor faults once the cause is fixed. |
 | `zero` | Make the current pose the zero. Stored in the motors. |
 | `set-id` | Not supported on RobStride motors: set IDs with RobStride Motor Studio. |
@@ -130,7 +131,12 @@ elbow_flex, wrist_flex, wrist_yaw, wrist_roll, gripper`.
 | Read the arm | `get_joint_positions()`, `get_joint_velocities()`, `get_joint_torques()`, `get_temperatures()`, `status()`, `ee_pose()` |
 | Hand-guide it | `arm.float_mode()`, then `arm.set_gains()` to stiffen again |
 | Stop | `arm.stop()` (rest, then off), `arm.disable()` (off now), `arm.estop()` |
+| Open or close the gripper | `arm.gripper_opening()` (measured, 0 closed to 1 open), `arm.gripper_target(opening)` (joint rad) |
 | Use two arms | `Rig.load().group(["left", "right"])` |
+| Stop a group and see how each arm ended | `group.close()` (what leaving the `with` block does): per arm `"released"` only when torque off was confirmed |
+| Turn torque off on an arm that will not connect (a fault, a missing motor) | `maker_arm.bus.release(spec.open_backend(), spec.config())` |
+| Read a camera without waiting | `camera.newest()` (`frame, stamp = ...`, or None; `.age_s` on the monotonic clock) |
+| Test without hardware | `testing.simulated_arm()`, `testing.simulated_backend()`, `testing.simulated_group(rig)` |
 
 Once enabled, the arm runs its own 200 Hz loop. It keeps targets inside the joint limits, limits
 speed, adds gravity compensation, and holds the pose if anything faults.
@@ -184,6 +190,12 @@ for q in result.q:                              # (T, 6) joint commands
 `stream.step(pose)` solves one pose at a time. `arm.move_ee` uses the same solver. The algorithm is
 Dream Labs' `dream_ik`, ported to numpy; see [`NOTICE`](NOTICE).
 
+The `jax` extra (`pip install -e '.[jax]'`, Python 3.11+) adds Dream Labs' original solver, compiled with JAX, behind
+the same interface: `trajectory_ik.from_config(arm.config, chain=arm.chain, solver="jax")`. It is used only when asked
+for (`"auto"`, the default, is numpy): importing it sets process-wide JAX settings. Its first solve of each chunk
+length compiles for about half a minute (`ik.warmup(rows)` does it ahead), then a chunk solves several times faster
+than with numpy, so choose it for a long-running policy loop; `move_ee` and the CLI always use numpy.
+
 ### Cameras
 
 ```python
@@ -204,7 +216,7 @@ More runnable code is in [`examples/`](examples).
 - **A fault holds the arm in place.** Stale feedback, a motor fault or 55 °C on the gripper
   stops motion; the gripper lets go, the other joints hold.
 - **If the program is killed,** joints 1-6 keep holding their last command and the gripper lets go
-  after 0.5 s. Run `maker-arm release` to turn torque off.
+  after 0.5 s. Run `maker-arm rest` to bring it down and turn torque off (`release` drops it where it is).
 - **Keep a hardware emergency stop** on motor power.
 
 More: [docs/safety.md](docs/safety.md).

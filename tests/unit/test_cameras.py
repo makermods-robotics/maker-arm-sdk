@@ -134,8 +134,30 @@ def test_read_waits_for_a_new_frame(fake_cv2):
 def test_latest_respects_max_age(fake_cv2):
     with cameras.Camera(0) as cam:
         assert cam.latest(max_age_s=1.0) is not None
-        cam._stamp -= 10
+        cam._captured -= 10
         assert cam.latest(max_age_s=1.0) is None and cam.latest() is not None
+
+
+def test_newest_gives_the_frame_and_its_read_timestamp_without_waiting(fake_cv2):
+    cam = cameras.Camera(0)
+    assert cam.newest() is None
+    with cam:
+        frame, stamp = cam.read()
+        newest_frame, newest_stamp = cam.newest()
+        assert newest_stamp >= stamp and abs(newest_stamp - time.time()) < 1.0
+        assert newest_frame.shape == frame.shape
+        cam._captured -= 10
+        assert cam.newest(max_age_s=1.0) is None and cam.newest() is not None
+
+
+def test_a_wall_clock_step_back_does_not_make_an_old_frame_fresh(fake_cv2):
+    with cameras.Camera(0) as cam:
+        newest = cam.newest()
+        image, stamp = newest
+        assert newest.image is image and newest.stamp == stamp and 0 <= newest.age_s < 1.0
+        cam._stamp += 3600     # the wall clock stepped back an hour after the capture
+        cam._captured -= 10
+        assert cam.newest(max_age_s=1.0) is None and cam.newest().age_s >= 10
 
 
 def test_a_camera_that_stops_sending_is_reopened(fake_cv2, monkeypatch):

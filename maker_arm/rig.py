@@ -316,10 +316,11 @@ class ArmGroup:
     """Several arms driven together: connect, enable and stop all of them, in parallel when each
     has its own bus. If one arm fails to enable, the arms already enabled are stopped again.
 
-    Leaving a ``with`` block stops every enabled arm (verified return to rest, then release) and
-    disconnects. An arm whose return is not verified (or is interrupted) is never released: it
-    is detached holding its pose when no stiff joint has a motor watchdog armed, else left
-    ENABLED with its control loop holding while this process runs (stop() or disable() it).
+    Leaving a ``with`` block, or close(), stops every enabled arm (verified return to rest, then
+    release) and disconnects; close() says per arm whether torque off was confirmed. An arm whose
+    return is not verified (or is interrupted) is never released: it is detached holding its pose
+    when no stiff joint has a motor watchdog armed, else left ENABLED with its control loop holding
+    while this process runs (stop() or disable() it).
     """
 
     def __init__(self, arms: Union[dict[str, Arm], Iterable[Arm]], parallel: bool = True):
@@ -364,9 +365,9 @@ class ArmGroup:
             raise error if isinstance(error, ArmError) else ArmError(f"{name}: {error}") from error
         return {n: results.get(n) for n in names}
 
-    def connect(self, clear_faults: bool = False) -> None:
+    def connect(self, clear_faults: bool = False, clear_released: bool = False) -> None:
         try:
-            self.each(lambda a: a.connect(clear_faults=clear_faults))
+            self.each(lambda a: a.connect(clear_faults=clear_faults, clear_released=clear_released))
         except BaseException:
             self.disconnect()
             raise
@@ -402,24 +403,69 @@ class ArmGroup:
         return self
 
     def __exit__(self, *exc) -> None:
-        try:
-            self.stop()
-        finally:
-            for name, arm in self.arms.items():
-                try:
-                    if arm.state not in (ArmState.ENABLED, ArmState.FAULT):
-                        arm.disconnect()
-                        continue
-                    arm.hold_current_position()
-                    unsafe = arm.detach_unsafe()
-                    if unsafe:
-                        log.error("%s: return to rest not verified; still holding with torque on (control loop "
-                                  "running): %s would drop on their watchdog if commands stopped", name,
-                                  ", ".join(unsafe))
+        self.close()
+
+    def close(self) -> dict[str, str]:
+        """Stop every arm and disconnect, as leaving a ``with`` block does. Outcome per arm:
+        "released" (torque off confirmed by every motor), "energized" (not enabled here but its
+        motors report torque on, e.g. left holding by an earlier process: bus closed, still on),
+        "unknown" (torque off not confirmed: a motor did not answer, reports no mode, or the arm
+        was never connected), "detached" (return to rest not verified: bus closed with torque on,
+        holding its pose; joints with a motor watchdog release when it expires), "holding" (return
+        not verified and a stiff joint would drop on its watchdog: left ENABLED, control loop
+        holding) or "error: <reason>". Only "released" means the arm is off."""
+        enabled = {n for n, a in self.arms.items() if a.state in (ArmState.ENABLED, ArmState.FAULT)}
+
+        def stop(arm: Arm) -> None:
+            try:
+                arm.stop()
+            except Exception as e:   # the arm is handled below by the state it is left in
+                log.error("stop failed: %s", e)
+
+        self.each(stop)
+        outcomes: dict[str, str] = {}
+        for name, arm in self.arms.items():
+            try:
+                if arm.state not in (ArmState.ENABLED, ArmState.FAULT):
+                    if name in enabled:
+                        outcomes[name] = "unknown" if arm.unconfirmed_disable else "released"
                     else:
-                        releasing = arm.detach()
-                        log.error("%s: return to rest not verified; left holding with torque on (%s release "
-                                  "on their watchdog). Support it, then run '%s release'", name,
-                                  ", ".join(releasing) or "no joints", CLI_NAME)
-                except Exception as e:
-                    log.error("%s: closing failed: %s", name, e)
+                        outcomes[name] = _reported_torque(arm)
+                    arm.disconnect()
+                    if outcomes[name] != "released":
+                        log.error("%s: torque off not confirmed (%s)", name, outcomes[name])
+                    continue
+                arm.hold_current_position()
+                unsafe = arm.detach_unsafe()
+                if unsafe:
+                    outcomes[name] = "holding"
+                    log.error("%s: return to rest not verified; still holding with torque on (control loop "
+                              "running): %s would drop on their watchdog if commands stopped", name,
+                              ", ".join(unsafe))
+                else:
+                    releasing = arm.detach()
+                    outcomes[name] = "detached"
+                    log.error("%s: return to rest not verified; left holding with torque on (%s release "
+                              "on their watchdog). Support it, then run '%s release'", name,
+                              ", ".join(releasing) or "no joints", CLI_NAME)
+            except Exception as e:
+                outcomes[name] = f"error: {e}"
+                log.error("%s: closing failed: %s", name, e)
+        return outcomes
+
+
+def _reported_torque(arm: Arm) -> str:
+    """"released", "energized" or "unknown" from fresh replies of an arm that is not enabled."""
+    if arm.state is not ArmState.CONNECTED:
+        return "unknown"
+    try:
+        fresh = arm.refresh()
+    except Exception as e:
+        log.error("torque state not read: %s", e)
+        return "unknown"
+    if not fresh or not all(fresh):
+        return "unknown"
+    reported = [j["enabled"] for j in arm.status()["joints"].values()]
+    if any(on is True for on in reported):
+        return "energized"
+    return "unknown" if None in reported else "released"

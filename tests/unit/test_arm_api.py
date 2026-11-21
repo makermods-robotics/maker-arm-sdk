@@ -267,3 +267,24 @@ def test_set_motor_id_refuses_an_id_already_on_the_bus_and_cleans_up():
     with pytest.raises(ArmError, match="already answers"):
         arm.set_motor_id(1, 2)
     assert bus.is_open and arm.refresh() == [True, True]   # the arm's receive path is back
+
+
+def test_gripper_opening_and_target_from_the_gripper_joint():
+    arm, _, motors = make_arm()   # gripper limits [-1.6, -0.04], closing toward +: closed -0.04, open -1.6
+    arm.connect()
+    try:
+        assert arm.gripper_target(0.0) == pytest.approx(-0.04) and arm.gripper_target(1.0) == pytest.approx(-1.6)
+        assert arm.gripper_target(2.0) == pytest.approx(-1.6)    # clipped
+        motors[2].position = arm.gripper_target(0.25)
+        arm.refresh()
+        assert arm.gripper_opening() == pytest.approx(0.25, abs=1e-3)
+        with pytest.raises(ValueError):
+            arm.gripper_target(math.nan)
+    finally:
+        arm.disconnect()
+    joints = two_joint_config().joints
+    arm, _, _ = make_arm(joints=[joints[0], replace(joints[1], open_position=-1.0)])
+    assert arm.gripper_target(1.0) == pytest.approx(-1.0)
+    arm, _, _ = make_arm(joints=[joints[0], replace(joints[1], name="hand")])
+    with pytest.raises(sdk.errors.ArmError, match="gripper"):
+        arm.gripper_opening()

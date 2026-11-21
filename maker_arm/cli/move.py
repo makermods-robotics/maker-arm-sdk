@@ -44,28 +44,36 @@ def clip(config, q: list[float]) -> list[float]:
     return [min(j.hi - m, max(j.lo + m, v)) for j, v in zip(config.joints, q)]
 
 
-def joint_goal(a, config, present: list[float]) -> list[float]:
+def _index(names: list[str], name: str) -> int:
+    if name not in names:
+        raise CliError(f"no joint {name!r}; joints: {', '.join(names)}")
+    return names.index(name)
+
+
+def pose_goal(pose: str, config, present: list[float]) -> list[float]:
+    """--pose as joint targets, clipped into the limits: rest = the profile's rest_pose, else the zero
+    pose; zero; or NAME=DEG,... (other joints stay at ``present``)."""
     names = [j.name for j in config.joints]
     goal = list(present)
-
-    def index(name: str) -> int:
-        if name not in names:
-            raise CliError(f"no joint {name!r}; joints: {', '.join(names)}")
-        return names.index(name)
-
-    if a.pose in ("zero", "rest"):
-        rest = config.rest_pose if a.pose == "rest" else None
+    if pose in ("zero", "rest"):
+        rest = config.rest_pose if pose == "rest" else None
         goal = list(rest) if rest else [0.0] * len(names)
-    elif a.pose:
-        for item in a.pose.split(","):
+    elif pose:
+        for item in pose.split(","):
             name, _, value = item.partition("=")
             if not value:
-                raise CliError(f"--pose expects rest, zero or NAME=DEG,...; got {a.pose!r}")
-            goal[index(name.strip())] = math.radians(float(value))
+                raise CliError(f"--pose expects rest, zero or NAME=DEG,...; got {pose!r}")
+            goal[_index(names, name.strip())] = math.radians(float(value))
+    return clip(config, goal)
+
+
+def joint_goal(a, config, present: list[float]) -> list[float]:
+    names = [j.name for j in config.joints]
+    goal = pose_goal(a.pose, config, present) if a.pose else list(present)
     for move in a.moves or []:
         if len(move) == 1:
             raise CliError(f"--joint {move['joint']} needs --to DEG or --by DEG")
-        i = index(move["joint"])
+        i = _index(names, move["joint"])
         goal[i] = move["to"] if "to" in move else present[i] + move["by"]
     return clip(config, goal)
 

@@ -23,6 +23,8 @@ maker-arm = "maker_arm.cli.main:main"
 
 [project.optional-dependencies]
 cameras = ["opencv-python"]
+# JAX trajectory IK (trajectory_ik_jax.py): Dream Labs' dream_ik, which ships only inside the dreamlabs package.
+jax = ["dreamlabs>=1.0.37,<1.1; python_version >= '3.11'"]
 dev = ["pytest", "opencv-python"]
 
 [tool.setuptools.packages.find]

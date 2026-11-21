@@ -20,25 +20,29 @@ PKG = "pkg"
 
 # Byte-identical in both repos (globs; a path may exist in neither repo yet).
 SHARED = [
-    "pkg/__init__.py", "pkg/arm.py", "pkg/cameras.py", "pkg/config.py", "pkg/errors.py",
+    "pkg/__init__.py", "pkg/arm.py", "pkg/bus.py", "pkg/cameras.py", "pkg/config.py", "pkg/errors.py",
     "pkg/gravity.py", "pkg/gripper.py", "pkg/kinematics.py", "pkg/mapping.py", "pkg/rig.py",
-    "pkg/stall.py", "pkg/teleop.py", "pkg/trajectory_ik.py",
+    "pkg/stall.py", "pkg/teleop.py", "pkg/testing.py", "pkg/trajectory_ik.py", "pkg/trajectory_ik_jax.py",
     "pkg/cli/*.py", "pkg/leaders/*.py", "pkg/transport/*.py", "pkg/profiles/__init__.py",
     "tests/conftest.py",
     "tests/unit/chain_fixture.py", "tests/unit/teleop_fakes.py",
     "tests/unit/test_arm.py", "tests/unit/test_arm_api.py", "tests/unit/test_arm_model.py",
+    "tests/unit/test_attach.py",
+    "tests/unit/test_bus.py",
     "tests/unit/test_cameras.py", "tests/unit/test_check_all_motors.py", "tests/unit/test_cli*.py",
     "tests/unit/test_config.py", "tests/unit/test_errors.py", "tests/unit/test_gravity.py",
     "tests/unit/test_gripper.py", "tests/unit/test_import.py", "tests/unit/test_kinematics.py",
     "tests/unit/test_layout.py", "tests/unit/test_leaders.py", "tests/unit/test_mapping.py",
     "tests/unit/test_rig.py", "tests/unit/test_slcan_codec.py", "tests/unit/test_socketcan_frames.py",
     "tests/unit/test_stall.py", "tests/unit/test_sync_shared.py", "tests/unit/test_teleop.py",
-    "tests/unit/test_trajectory_ik.py", "tests/unit/test_transport_mock.py",
+    "tests/unit/test_testing.py",
+    "tests/unit/test_trajectory_ik.py", "tests/unit/test_trajectory_ik_jax.py",
+    "tests/unit/test_transport_mock.py",
     "tools/sync_shared.py", "scripts/linux/setup_slcan.sh",
 ]
 
-# Package files that differ per repo (protocol, identity); profiles/* data and urdf/* are specific too.
-SPECIFIC = ["pkg/_product.py", "pkg/motor.py", "pkg/protocol.py"]
+# Package files that differ per repo (protocol, identity, motor simulation); profiles/* data and urdf/* are specific too.
+SPECIFIC = ["pkg/_product.py", "pkg/_sim_motor.py", "pkg/motor.py", "pkg/protocol.py"]
 
 
 def package_dir(root: Path) -> str:

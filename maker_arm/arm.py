@@ -115,12 +115,14 @@ class Arm:
             m.handle_frame(can_id, data)
 
     # ── connection management ──
-    def connect(self, clear_faults: bool = False) -> None:
+    def connect(self, clear_faults: bool = False, clear_released: bool = False) -> None:
         """Find every motor without changing torque state.
 
         Each motor first gets a non-clearing fault query. A faulted motor is reported and the
-        fault is kept (pass ``clear_faults=True`` to clear it explicitly). Fault-free motors
-        then return a fresh position. Torque is never enabled or released here.
+        fault is kept (pass ``clear_faults=True`` to clear it explicitly). ``clear_released=True``
+        clears only the state a release_on_fault joint's motor watchdog leaves behind (the gripper
+        let go after commands stopped; see Motor.watchdog_released). Fault-free motors then return
+        a fresh position. Torque is never enabled or released here.
         """
         with self._lifecycle:
             if self._state is not ArmState.DISCONNECTED:
@@ -132,7 +134,7 @@ class Arm:
             self._backend.set_recv_callback(self._on_frame)
             self._backend.open()
             try:
-                self._check_motors(clear_faults)
+                self._check_motors(clear_faults, clear_released)
                 for m in self.motors:
                     m.validate(self.PARAM_TIMEOUT)
             except BaseException:
@@ -158,7 +160,7 @@ class Arm:
             self._state = ArmState.CONNECTED
             log.info("connected: %d motors online", len(self.motors))
 
-    def _check_motors(self, clear_faults: bool = False) -> None:
+    def _check_motors(self, clear_faults: bool = False, clear_released: bool = False) -> None:
         """Non-clearing fault query, then a fresh state read, for every motor."""
         missing, faulted = [], []
         for m, j in zip(self.motors, self.config.joints):
@@ -167,6 +169,11 @@ class Arm:
             except ParamTimeout:
                 missing.append(m.motor_id)
                 continue
+            if status.has_fault and clear_released and j.release_on_fault and m.watchdog_released:
+                log.info("%s: clearing the state its motor watchdog left (%s)", j.label, status.text)
+                m.clear_fault()
+                time.sleep(0.01)
+                status = m.check(self.REPLY_TIMEOUT, self.REPLY_ATTEMPTS)
             if status.has_fault and clear_faults:
                 log.warning("%s: clearing fault 0x%08X (%s) on request", j.label, status.code, status.text)
                 m.clear_fault()
@@ -295,10 +302,36 @@ class Arm:
             }
         return {"state": self._state.value, "fault_reason": self.fault_reason, "joints": joints}
 
+    # ── gripper (the joint named "gripper") ──
+    def _gripper_range(self) -> tuple[int, float, float]:
+        """(index, closed position, fully open position) of the gripper joint, rad."""
+        for i, j in enumerate(self.config.joints):
+            if j.name == "gripper":
+                closed, far = (j.hi, j.lo) if j.closing_direction > 0 else (j.lo, j.hi)
+                return i, closed, far if j.open_position is None else j.open_position
+        raise ArmError("this profile has no joint named 'gripper'")
+
+    def gripper_opening(self) -> float:
+        """Measured gripper opening: 0 closed, 1 fully open (not clipped; nan without feedback)."""
+        i, closed, full = self._gripper_range()
+        return (self.get_joint_positions()[i] - closed) / (full - closed)
+
+    def gripper_target(self, opening: float) -> float:
+        """Gripper joint position (rad) for ``opening`` (0 closed, 1 fully open; clipped to [0, 1])."""
+        if not math.isfinite(opening):
+            raise ValueError(f"opening must be finite, got {opening}")
+        _, closed, full = self._gripper_range()
+        return closed + min(1.0, max(0.0, opening)) * (full - closed)
+
     # ── enabling ──
-    def enable(self, start_loop: bool = True, cancel: Optional[threading.Event] = None) -> None:
+    def enable(self, start_loop: bool = True, cancel: Optional[threading.Event] = None,
+               speed: Optional[float] = None) -> None:
         """Torque on, holding the measured pose. ``cancel`` (like estop()) aborts an enable in
-        progress: torque already applied is released and StateError is raised."""
+        progress: torque already applied is released and StateError is raised. ``speed`` (rad/s)
+        caps the motion until the first target, such as a joint resting past a limit being brought
+        inside it (default: max_velocity)."""
+        if speed is not None and not (math.isfinite(speed) and speed > 0):
+            raise ValueError("speed must be positive")
         with self._lifecycle:
             if self._state is not ArmState.CONNECTED:
                 raise StateError(f"enable() requires CONNECTED state, currently {self._state.name}")
@@ -325,41 +358,14 @@ class Arm:
                        if m.feedback is not None and m.feedback.enabled]
             if holding:
                 raise ConnectError(f"motors {', '.join(holding)} already have torque on; nothing was sent to "
-                                   f"them. Run '{CLI_NAME} release' once the arm is supported, or power-cycle it")
+                                   f"them. Take the arm over with attach() ('{CLI_NAME} rest' brings it down "
+                                   "and releases it)")
             pos = self.get_joint_positions()
-            grace = self.config.full_turn_grace
-            for i, j in enumerate(self.config.joints):
-                if not math.isfinite(pos[i]):
-                    raise ConnectError(f"{j.label}: no position before enable, refusing to enable")
-                if pos[i] < j.lo - grace or pos[i] > j.hi + grace:
-                    raise ConnectError(
-                        f"{j.label} (motor {j.motor_id}) at {math.degrees(pos[i]):+.1f} deg is outside its limits "
-                        f"[{math.degrees(j.lo):.1f}, {math.degrees(j.hi):.1f}] deg even after full-turn correction -- "
-                        f"stale or missing zero. Re-zero with '{CLI_NAME} zero --all' at the zero pose")
-                temp = self.motors[i].feedback.temperature
-                limit = j.enable_temperature_c if j.enable_temperature_c is not None else j.max_temperature_c
-                if limit is not None and temp >= limit:
-                    raise ConnectError(f"{j.label} is {temp:.1f} °C; enable needs it below {limit:.0f} °C")
+            self._check_start(pos, range(self.config.n_joints))
             self._gravity = self._make_gravity()
             self._arm_watchdogs()
-            now = time.monotonic()
-            with self._target_lock:
-                self._user_targets = list(pos)
-                self._internal = list(pos)
-                self._synced = [False] * self.config.n_joints
-                self._targets_received = False
-                self._returning = False
-                self._speed = None
-                self._stuck_anchor = [(p, now) for p in pos]
-            self._hold = {i: GripperHold(j.hold_torque_nm, (j.lo, j.hi), j.closing_direction)
-                          for i, j in enumerate(self.config.joints) if j.hold_torque_nm is not None}
-            self._hold_out.clear()
-            self._release_sent.clear()
+            self._start_targets(pos, speed)
             self.rest_pose = list(pos)
-            self._released.clear()
-            self._faulted.clear()
-            self.fault_reason = None
-            self.fault_reasons = []
             try:
                 for i, m in enumerate(self.motors):
                     abort_if_cancelled()
@@ -381,14 +387,153 @@ class Arm:
                 # Includes cancellation and a motor whose enable may have landed before the error.
                 self._release_all()
                 raise
-            now = time.monotonic()
-            self._poll_sent = {m.motor_id: now for m in self.motors}
-            self._state = ArmState.ENABLED
-            if start_loop:
-                self._running = True
-                self._loop_thread = threading.Thread(target=self._control_loop, args=(self._session,),
-                                                     daemon=True, name=f"{CLI_NAME}-ctrl")
-                self._loop_thread.start()
+            self._go_enabled(start_loop)
+
+    def attach(self, cancel: Optional[threading.Event] = None, speed: Optional[float] = None) -> None:
+        """Take over an arm left holding with torque on and no owning process (``--then stay``, a
+        crashed program), from CONNECTED, without letting it sag: nothing is sent to a motor that
+        reports torque on except holding frames at its measured pose (profile gains, gravity
+        feed-forward) from the control loop. A motor that reports torque off (a gripper its watchdog
+        released; connect with ``clear_released=True``) is enabled at its measured pose as enable()
+        does. A motor whose firmware does not report torque state first gets one holding frame, then
+        an enable, so whether it was holding or not it ends holding its measured pose.
+
+        Refused (ConnectError, nothing sent) when every motor reports torque off (use enable()), on
+        missing or stale feedback, a latched fault, or a joint outside its limits. On a later
+        failure only the motors this call enabled are released. Then ENABLED, with every protection
+        enable() gives. ``rest_pose`` stays None, so stop() holds rather than releasing until a rest
+        target is given (return_to_rest(rest), or set ``rest_pose``). ``cancel`` and ``speed`` as
+        in enable().
+        """
+        if speed is not None and not (math.isfinite(speed) and speed > 0):
+            raise ValueError("speed must be positive")
+        with self._lifecycle:
+            if self._state is not ArmState.CONNECTED:
+                raise StateError(f"attach() requires CONNECTED state, currently {self._state.name}")
+            if self._loop_thread is not None and self._loop_thread.is_alive():
+                raise StateError("the previous control loop is still running; refusing to attach")
+            generation = self._generation
+
+            def abort_if_cancelled() -> None:
+                if self._generation != generation:
+                    raise StateError("e-stop during attach")
+                if cancel is not None and cancel.is_set():
+                    raise StateError("attach cancelled")
+
+            abort_if_cancelled()
+            for m in self.motors:
+                if m.fault_latched:
+                    raise ConnectError(f"motor {m.motor_id} has a latched fault ({m.fault_latched}); "
+                                       "refusing to attach")
+            self._check_motors()
+            torque = [m.feedback.enabled for m in self.motors]
+            if not any(t is not False for t in torque):
+                raise ConnectError("no motor reports torque on: nothing to attach to; use enable()")
+            for m, j in zip(self.motors, self.config.joints):
+                if m.feedback_age > self.config.feedback_timeout:
+                    raise ConnectError(f"{j.label}: feedback is {m.feedback_age:.2f} s old; refusing to attach")
+            pos = self.get_joint_positions()
+            enabling = [i for i, t in enumerate(torque) if t is not True]
+            self._check_start(pos, enabling, "attach")
+            self._gravity = self._make_gravity()
+            self._arm_watchdogs()
+            self._start_targets(pos, speed)
+            self.rest_pose = None
+            enabled: list[int] = []
+            try:
+                feedforward = self._feedforward(list(pos), time.monotonic())
+                for i in enabling:
+                    m, j = self.motors[i], self.config.joints[i]
+                    abort_if_cancelled()
+                    if torque[i] is None:
+                        # Holds now if the motor is energized; the enable below resumes this frame.
+                        m.send_command(self._to_motor(i, pos[i]), 0.0, j.kp, j.kd, feedforward[i])
+                        time.sleep(0.002)
+                    elif not m.preload(self._to_motor(i, pos[i]), self.REPLY_TIMEOUT):
+                        raise ConnectError(f"motor {m.motor_id} did not acknowledge the neutral preload")
+                    with self._enable_gate:
+                        abort_if_cancelled()
+                        enabled.append(i)
+                        confirmed = m.enable_confirmed(self.REPLY_TIMEOUT)
+                    if m.fault_latched:
+                        raise ConnectError(f"motor {m.motor_id} reported a fault on enable ({m.fault_latched})")
+                    if not confirmed:
+                        raise ConnectError(f"motor {m.motor_id} enable rejected: no reply, or its feedback "
+                                           "does not report torque on")
+                    time.sleep(0.01)
+                abort_if_cancelled()
+            except BaseException:
+                # The motors that were holding keep their torque: releasing them would drop the arm.
+                self._release_enabled([i for i in enabled if torque[i] is False])
+                self._restore_watchdogs(set(self._watchdog_restore))
+                raise
+            self._go_enabled(True)
+
+    def _check_start(self, pos: list[float], check_temperature, action: str = "enable") -> None:
+        """Refuse to start without a position, outside the limits, or (joints in
+        ``check_temperature``) at or above the enable temperature."""
+        grace = self.config.full_turn_grace
+        hot = set(check_temperature)
+        for i, j in enumerate(self.config.joints):
+            if not math.isfinite(pos[i]):
+                raise ConnectError(f"{j.label}: no position before {action}, refusing to {action}")
+            if pos[i] < j.lo - grace or pos[i] > j.hi + grace:
+                raise ConnectError(
+                    f"{j.label} (motor {j.motor_id}) at {math.degrees(pos[i]):+.1f} deg is outside its limits "
+                    f"[{math.degrees(j.lo):.1f}, {math.degrees(j.hi):.1f}] deg even after full-turn correction -- "
+                    f"stale or missing zero. Re-zero with '{CLI_NAME} zero --all' at the zero pose")
+            temp = self.motors[i].feedback.temperature
+            limit = j.enable_temperature_c if j.enable_temperature_c is not None else j.max_temperature_c
+            if i in hot and limit is not None and temp >= limit:
+                raise ConnectError(f"{j.label} is {temp:.1f} °C; {action} needs it below {limit:.0f} °C")
+
+    def _start_targets(self, pos: list[float], speed: Optional[float]) -> None:
+        """Targets, gripper regulation and fault evidence for a session starting at ``pos``."""
+        now = time.monotonic()
+        with self._target_lock:
+            self._user_targets = list(pos)
+            self._internal = list(pos)
+            self._synced = [False] * self.config.n_joints
+            self._targets_received = False
+            self._returning = False
+            self._speed = speed
+            self._stuck_anchor = [(p, now) for p in pos]
+        self._hold = {i: GripperHold(j.hold_torque_nm, (j.lo, j.hi), j.closing_direction)
+                      for i, j in enumerate(self.config.joints) if j.hold_torque_nm is not None}
+        self._hold_out.clear()
+        self._release_sent.clear()
+        self._released.clear()
+        self._faulted.clear()
+        self.fault_reason = None
+        self.fault_reasons = []
+
+    def _go_enabled(self, start_loop: bool) -> None:
+        now = time.monotonic()
+        self._poll_sent = {m.motor_id: now for m in self.motors}
+        self._state = ArmState.ENABLED
+        if start_loop:
+            self._running = True
+            self._loop_thread = threading.Thread(target=self._control_loop, args=(self._session,),
+                                                 daemon=True, name=f"{CLI_NAME}-ctrl")
+            self._loop_thread.start()
+
+    def _release_enabled(self, indices: list[int]) -> None:
+        """Verified torque-off on the motors at ``indices`` only."""
+        positions = self.get_joint_positions()
+        unconfirmed = []
+        for i in indices:
+            m = self.motors[i]
+            try:
+                if math.isfinite(positions[i]):
+                    m.send_command(self._to_motor(i, positions[i]), 0.0, 0.0, 0.0, 0.0)
+                if not m.disable_confirmed(self.REPLY_TIMEOUT, self.REPLY_ATTEMPTS):
+                    unconfirmed.append(m.motor_id)
+            except Exception as e:
+                log.error("failed to disable motor %d: %s", m.motor_id, e)
+                unconfirmed.append(m.motor_id)
+        self.unconfirmed_disable = unconfirmed
+        if unconfirmed:
+            log.error("could not confirm torque release on motors %s; cut motor power if they hold", unconfirmed)
 
     @staticmethod
     def _wait_reply(m: Motor, sequence: int, timeout: float) -> bool:
@@ -702,7 +847,8 @@ class Arm:
         ``speed`` caps each joint in rad/s, as in move_to().
 
         The path starts at the commanded pose and eases in and out (minimum jerk); each control tick of it is
-        solved by the trajectory IK (trajectory_ik.py) and streamed through the joint targets, so no tick moves
+        solved by the numpy trajectory IK (trajectory_ik.py; never the JAX one, whose first solve compiles for tens
+        of seconds) and streamed through the joint targets, so no tick moves
         a joint further than its speed allows and a small tool move stays a small joint move. Joints past the
         chain (the gripper) keep their command. Refused (False, nothing sent) when not ENABLED or when the end
         pose is out of reach within the soft limits. With ``wait`` it blocks until arrival as move_to() does

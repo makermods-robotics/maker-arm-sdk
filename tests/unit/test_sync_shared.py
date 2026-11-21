@@ -28,6 +28,11 @@ def test_the_script_and_its_test_are_shared():
     assert {"tools/sync_shared.py", "tests/unit/test_sync_shared.py", "pkg/arm.py"} <= shared
 
 
+def test_the_motor_simulation_is_specific_and_testing_shared():
+    assert "pkg/_sim_motor.py" in sync.SPECIFIC
+    assert "pkg/testing.py" in sync.shared_files(ROOT)
+
+
 @pytest.fixture
 def two_repos(tmp_path):
     def repo(name, pkg):
