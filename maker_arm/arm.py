@@ -1053,6 +1053,7 @@ class Arm:
                 if math.isfinite(p):
                     self._user_targets[i] = p
                     self._internal[i] = p
+        began = time.monotonic()
         if not self._wait_ticks(2):
             log.error("return to rest aborted: control loop is not running")
             return False
@@ -1065,7 +1066,7 @@ class Arm:
         with self._target_lock:
             self._synced = [True] * cfg.n_joints
         worst = max(abs(start[i] - rest[i]) for i in include)
-        if worst <= cfg.rest_arrived:
+        if worst <= cfg.rest_arrived and self._measured_since(include, began):
             return True
         period = 1.0 / cfg.rest_rate_hz
         duration = worst / cfg.rest_speed
@@ -1089,11 +1090,12 @@ class Arm:
             if not self._rest_feedback_ok(include, pos):
                 return False
             worst = max(abs(pos[i] - rest[i]) for i in include)
-            if worst <= cfg.rest_arrived:
+            fresh = self._measured_since(include, began)
+            if worst <= cfg.rest_arrived and fresh:
                 return True
             if best - worst < cfg.rest_stall_improvement:
                 stalled += 1
-                if stalled >= cfg.rest_stall_polls:
+                if stalled >= cfg.rest_stall_polls and fresh:
                     return worst <= cfg.rest_settle
             else:
                 stalled = 0
@@ -1110,6 +1112,12 @@ class Arm:
 
     def _rest_active(self) -> bool:
         return self._running and self._state in (ArmState.ENABLED, ArmState.FAULT)
+
+    def _measured_since(self, include: list[int], since: float) -> bool:
+        """Has every joint in ``include`` reported since ``since``? Arrival is judged only on such
+        readings, never on the cached pose of a motor that has gone silent."""
+        elapsed = time.monotonic() - since
+        return all(self.motors[i].feedback_age <= elapsed for i in include)
 
     def _rest_feedback_ok(self, include: list[int], positions: list[float]) -> bool:
         for i in include:

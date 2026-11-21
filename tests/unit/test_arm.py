@@ -278,6 +278,19 @@ def test_already_at_rest_releases_immediately():
         arm.disconnect()
 
 
+def test_a_joint_that_went_silent_is_not_judged_at_rest_on_its_last_reading():
+    arm, _, fakes = make(**fast_rest())
+    arm.connect()
+    arm.enable()
+    try:
+        fakes[1].online = False   # at rest, but its last reading is still within feedback_timeout
+        assert arm.stop() is False
+        assert arm.state in (ArmState.ENABLED, ArmState.FAULT)
+    finally:
+        arm.disable()
+        arm.disconnect()
+
+
 # ── regressions from the independent review ──
 def test_second_fault_while_holding_is_still_handled():
     arm, _, fakes = enabled_arm()
