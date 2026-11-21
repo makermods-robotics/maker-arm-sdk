@@ -96,10 +96,10 @@ def test_a_late_tick_of_a_simulated_arm_catches_up_with_the_clock():
         dt = 1.0 / arm.config.control_rate_hz
         step = arm.config.max_velocity * dt
         arm._tick(dt)                                   # the first tick: one period
-        time.sleep(3 * dt)
-        arm._tick(dt)                                   # three periods late: it catches up, within the cap
+        time.sleep(2 * testing.SIM_MAX_TICK_PERIODS * dt)
+        arm._tick(dt)                                   # very late: it catches up as far as the cap
         moved = arm.get_commanded_positions()[0] - start
-        assert 3.5 * step < moved <= (1 + testing.SIM_MAX_TICK_PERIODS) * step + 1e-9
+        assert moved == pytest.approx((1 + testing.SIM_MAX_TICK_PERIODS) * step)
     finally:
         arm.disable()
         arm.disconnect()
