@@ -15,13 +15,15 @@ motors track MIT commands, report status and temperatures, and take injected fau
 The control loop runs on the wall clock, and a loaded test machine can delay its wake-ups by
 tens to hundreds of milliseconds. Simulated arms therefore use simulation_timing(config): the same
 profile with a longer host-side feedback deadline (which also sets the status-reply deadline) and a
-lower control rate, so a late tick costs less of the motion. Shipped profiles and arms on real buses
-keep their own values.
+lower control rate, and each tick of a simulated arm advances its commands by the time that passed
+(up to a few periods) rather than one period, so late wake-ups do not leave it behind its targets.
+Shipped profiles and arms on real buses keep their own values and behaviour.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import time
 from pathlib import Path
 from typing import Iterable, Optional, Sequence, Union
 
@@ -35,6 +37,7 @@ ConfigLike = Union[ArmConfig, str, Path, None]
 
 SIM_FEEDBACK_TIMEOUT = 1.0   # s, host-side feedback deadline for simulated motors (at least)
 SIM_CONTROL_RATE_HZ = 50.0   # control loop rate for simulated motors (at most)
+SIM_MAX_TICK_PERIODS = 4     # a late tick of a simulated arm advances by at most this many periods
 
 
 class SimulatedMotors:
@@ -112,7 +115,22 @@ def simulated_arm(config: ConfigLike = None, positions: Optional[Sequence[float]
     backend, sim = simulated_backend(config, positions, **options)
     arm = Arm(sim.config, backend)
     arm._busy_wait_us = lambda us: None   # frame spacing is for real buses
+    _follow_the_clock(arm)
     return arm, sim
+
+
+def _follow_the_clock(arm: Arm) -> None:
+    """Each control tick of ``arm`` advances its commands by the time since the previous tick, between
+    one and SIM_MAX_TICK_PERIODS periods."""
+    tick, last = arm._tick, [None]
+
+    def timed(dt, session=None):
+        now = time.monotonic()
+        elapsed = dt if last[0] is None else now - last[0]
+        last[0] = now
+        tick(min(max(dt, elapsed), SIM_MAX_TICK_PERIODS * dt), session)
+
+    arm._tick = timed
 
 
 def simulated_group(rig: Union[Rig, dict, str, Path], names: Iterable[str] = ("all",),

@@ -84,6 +84,27 @@ def test_simulated_arms_relax_only_the_loop_timing():
     assert arm.config.joints == shipped.joints and arm.config.max_velocity == shipped.max_velocity
 
 
+def test_a_late_tick_of_a_simulated_arm_catches_up_with_the_clock():
+    arm, _ = testing.simulated_arm()
+    arm.connect()
+    arm.enable(start_loop=False)
+    try:
+        arm._synced = [True] * arm.config.n_joints
+        q = arm.get_joint_positions()
+        start, q[0] = q[0], q[0] + 1.0
+        assert arm.set_joint_targets(q)
+        dt = 1.0 / arm.config.control_rate_hz
+        step = arm.config.max_velocity * dt
+        arm._tick(dt)                                   # the first tick: one period
+        time.sleep(3 * dt)
+        arm._tick(dt)                                   # three periods late: it catches up, within the cap
+        moved = arm.get_commanded_positions()[0] - start
+        assert 3.5 * step < moved <= (1 + testing.SIM_MAX_TICK_PERIODS) * step + 1e-9
+    finally:
+        arm.disable()
+        arm.disconnect()
+
+
 def test_unknown_joint_is_named():
     _, sim = testing.simulated_arm()
     with pytest.raises(KeyError, match="no joint"):
