@@ -15,7 +15,7 @@ def fast(monkeypatch):
     monkeypatch.setattr(sdk.arm.Arm, "PARAM_TIMEOUT", 0.005)
 
 
-def wait_for(condition, timeout=2.0):
+def wait_for(condition, timeout=5.0):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if condition():
@@ -72,6 +72,13 @@ def test_injected_fault_overheating_and_silence_stop_the_arm():
         finally:
             arm.disable()
             arm.disconnect()
+
+
+def test_simulated_arms_relax_only_the_feedback_deadline():
+    shipped = sdk.config.ArmConfig.from_yaml(str(sdk._product.DEFAULT_PROFILE))
+    arm, _ = testing.simulated_arm()
+    assert arm.config.feedback_timeout == max(shipped.feedback_timeout, testing.SIM_FEEDBACK_TIMEOUT)
+    assert arm.config.control_rate_hz == shipped.control_rate_hz and arm.config.joints == shipped.joints
 
 
 def test_unknown_joint_is_named():

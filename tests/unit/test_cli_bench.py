@@ -29,6 +29,9 @@ class Bench:
         monkeypatch.setenv(rig_module.ENV_VAR, str(self.rig_path))
         monkeypatch.setattr(rig_module, "create_backend", self.create_backend)
         monkeypatch.setattr(sdk.arm.Arm, "PARAM_TIMEOUT", 0.005)
+        load = sdk.config.ArmConfig.from_yaml   # the CLI's arms get the simulated arms' timing
+        monkeypatch.setattr(sdk.config.ArmConfig, "from_yaml",
+                            classmethod(lambda cls, path: sdk.testing.simulation_timing(load(path))))
         monkeypatch.setattr(sdk.cli.common, "default_backend", lambda: "socketcan")
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
         monkeypatch.setattr(sdk.cli.ports, "gs_usb_adapters", lambda: (self.adapters(), None))

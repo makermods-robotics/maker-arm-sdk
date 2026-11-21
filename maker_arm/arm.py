@@ -79,6 +79,7 @@ class Arm:
         self._hold_out: dict[int, tuple[int, float, float, float]] = {}   # seq, position, kp, kd
         self._release_sent: dict[int, float] = {}
         self._poll_sent: dict[int, float] = {}
+        self._polling_since = 0.0             # when the control loop took over status polling
         self._gravity = None
         self._extra_torque: Optional[ExtraTorque] = None   # float_mode(extra_torque=...)
         self._floating = False                # float_mode() until set_gains() or a fault
@@ -512,6 +513,7 @@ class Arm:
         # Each motor's next status poll is due from its last status reply, so a slow enable
         # cannot leave a reply older than the status deadline.
         self._poll_sent = {m.motor_id: now - min(m.status_age, now) for m in self.motors}
+        self._polling_since = now
         self._state = ArmState.ENABLED
         if start_loop:
             self._running = True
@@ -1301,17 +1303,20 @@ class Arm:
             return
         cfg = self.config
         status_deadline = 2 * cfg.fault_poll_interval + cfg.feedback_timeout
+        # Only the control loop asks for status, so a reply's age counts from when it took over.
+        polling_for = time.monotonic() - self._polling_since
         for i, (m, j) in enumerate(zip(self.motors, cfg.joints)):
             if self._skipped(i):
                 continue
             reason = None
             fb = m.feedback
+            status_age = min(m.status_age, polling_for)
             if m.feedback_age > cfg.feedback_timeout:
                 reason = f"feedback timeout {m.feedback_age:.2f}s -- check bus/power"
             elif m.fault_latched:
                 reason = f"motor fault -- {m.fault_latched}"
-            elif m.status_age > status_deadline:
-                reason = f"no fault-status reply for {m.status_age:.2f}s"
+            elif status_age > status_deadline:
+                reason = f"no fault-status reply for {status_age:.2f}s"
             elif j.max_temperature_c is not None and fb.temperature >= j.max_temperature_c:
                 reason = f"overtemperature {fb.temperature:.1f} °C (limit {j.max_temperature_c:.0f} °C)"
             elif j.warning_is_fault and fb.warning:

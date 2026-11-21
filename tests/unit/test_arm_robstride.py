@@ -1,9 +1,11 @@
 """Arm behaviour that depends on RobStride specifics: parameter-capable firmware, mode bits,
 RUN_MODE, the CAN-timeout watchdog and the separate fault poll."""
 
+import time
+
 import pytest
 
-from fakes import FakeMotor, make_arm
+from fakes import FakeMotor, classify, make_arm
 from maker_arm.arm import Arm, ArmState
 from maker_arm.errors import ConnectError
 from maker_arm.motor import Motor
@@ -78,6 +80,18 @@ def test_tick_polls_faults_without_clearing():
     arm._tick(0.005)
     assert fakes[2].log.count("status_query") == 1    # one motor per tick, round-robin
     assert "clear" not in fakes[1].log + fakes[2].log
+
+
+def test_status_deadline_counts_from_when_the_loop_took_over():
+    arm, _, fakes = enabled_arm()
+    answer = fakes[1].handle
+    fakes[1].handle = lambda can_id, data: [] if classify(can_id, data)[0] == "status_query" else answer(can_id, data)
+    arm.motors[0]._status_time = time.monotonic() - 5.0   # a slow enable: the last reply is old
+    arm._tick(0.005)
+    assert arm.state is ArmState.ENABLED
+    arm._polling_since -= 1.0                              # the loop has been asking for a second
+    arm._tick(0.005)
+    assert arm.state is ArmState.FAULT and "no fault-status reply" in arm.fault_reason
 
 
 def test_modern_firmware_leaving_run_mode_faults():

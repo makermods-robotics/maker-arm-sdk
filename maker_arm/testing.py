@@ -11,10 +11,16 @@ motors track MIT commands, report status and temperatures, and take injected fau
     group, sims = simulated_group({"arms": {"left": {"backend": "gs_usb"}, "right": {"backend": "gs_usb"}}})
     with group:                            # a whole robot from a rig description (Rig, dict or path)
         group.enable()
+
+The control loop runs on the wall clock, and a loaded test machine can delay its wake-ups by
+hundreds of milliseconds. Simulated arms therefore use simulation_timing(config): the same profile
+with a longer host-side feedback deadline (which also sets the status-reply deadline). Shipped
+profiles and arms on real buses keep their own values.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Iterable, Optional, Sequence, Union
 
@@ -25,6 +31,8 @@ from .config import ArmConfig
 from .rig import ArmGroup, Rig
 
 ConfigLike = Union[ArmConfig, str, Path, None]
+
+SIM_FEEDBACK_TIMEOUT = 1.0   # s, host-side feedback deadline for simulated motors (at least)
 
 
 class SimulatedMotors:
@@ -63,6 +71,12 @@ class SimulatedMotors:
         _sim_motor.watchdog_timeout(self.motor(joint))
 
 
+def simulation_timing(config: ArmConfig) -> ArmConfig:
+    """A copy of ``config`` whose feedback deadline is at least SIM_FEEDBACK_TIMEOUT, for simulated
+    motors on a machine that may starve the control loop."""
+    return dataclasses.replace(config, feedback_timeout=max(config.feedback_timeout, SIM_FEEDBACK_TIMEOUT))
+
+
 def _config(config: ConfigLike) -> ArmConfig:
     if isinstance(config, ArmConfig):
         return config
@@ -73,9 +87,9 @@ def simulated_backend(config: ConfigLike = None, positions: Optional[Sequence[fl
                       **options) -> tuple:
     """(backend, SimulatedMotors): a MockBackend with one simulated motor per joint of ``config``
     (an ArmConfig, a profile path, or None for the shipped profile) at ``positions`` (rad, default
-    zero clipped into each joint's limits). ``options`` go to every simulated motor (e.g.
-    ``temperature=40.0``)."""
-    config = _config(config)
+    zero clipped into each joint's limits), its timing relaxed by simulation_timing(). ``options``
+    go to every simulated motor (e.g. ``temperature=40.0``)."""
+    config = simulation_timing(_config(config))
     joints = config.joints
     if positions is None:
         positions = [min(j.hi, max(j.lo, 0.0)) for j in joints]

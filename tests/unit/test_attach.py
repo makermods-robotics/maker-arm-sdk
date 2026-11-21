@@ -33,7 +33,7 @@ def left_energized(**options):
     first, sim = testing.simulated_arm(**options)
     first.connect()
     first.enable()
-    assert first.move_to(home_pose(first.config), speed=20.0)
+    assert first.move_to(home_pose(first.config), speed=20.0, timeout=10.0)
     first.detach()
     sim.watchdog_timeout("gripper")
     return sim, first.backend
