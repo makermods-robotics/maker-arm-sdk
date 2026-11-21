@@ -1053,7 +1053,7 @@ class Arm:
                 if math.isfinite(p):
                     self._user_targets[i] = p
                     self._internal[i] = p
-        began = time.monotonic()
+        sequences = [m.feedback_sequence for m in self.motors]
         if not self._wait_ticks(2):
             log.error("return to rest aborted: control loop is not running")
             return False
@@ -1066,7 +1066,7 @@ class Arm:
         with self._target_lock:
             self._synced = [True] * cfg.n_joints
         worst = max(abs(start[i] - rest[i]) for i in include)
-        if worst <= cfg.rest_arrived and self._measured_since(include, began):
+        if worst <= cfg.rest_arrived and self._measured_since(include, sequences):
             return True
         period = 1.0 / cfg.rest_rate_hz
         duration = worst / cfg.rest_speed
@@ -1090,7 +1090,7 @@ class Arm:
             if not self._rest_feedback_ok(include, pos):
                 return False
             worst = max(abs(pos[i] - rest[i]) for i in include)
-            fresh = self._measured_since(include, began)
+            fresh = self._measured_since(include, sequences)
             if worst <= cfg.rest_arrived and fresh:
                 return True
             if best - worst < cfg.rest_stall_improvement:
@@ -1113,11 +1113,11 @@ class Arm:
     def _rest_active(self) -> bool:
         return self._running and self._state in (ArmState.ENABLED, ArmState.FAULT)
 
-    def _measured_since(self, include: list[int], since: float) -> bool:
-        """Has every joint in ``include`` reported since ``since``? Arrival is judged only on such
-        readings, never on the cached pose of a motor that has gone silent."""
-        elapsed = time.monotonic() - since
-        return all(self.motors[i].feedback_age <= elapsed for i in include)
+    def _measured_since(self, include: list[int], sequences: list[int]) -> bool:
+        """Has every joint in ``include`` reported since its feedback sequence was ``sequences``?
+        Arrival is judged only on such readings, never on the cached pose of a motor that has gone
+        silent."""
+        return all(self.motors[i].feedback_sequence != sequences[i] for i in include)
 
     def _rest_feedback_ok(self, include: list[int], positions: list[float]) -> bool:
         for i in include:

@@ -74,11 +74,12 @@ def test_injected_fault_overheating_and_silence_stop_the_arm():
             arm.disconnect()
 
 
-def test_simulated_arms_relax_only_the_feedback_deadline():
+def test_simulated_arms_relax_only_the_loop_timing():
     shipped = sdk.config.ArmConfig.from_yaml(str(sdk._product.DEFAULT_PROFILE))
     arm, _ = testing.simulated_arm()
     assert arm.config.feedback_timeout == max(shipped.feedback_timeout, testing.SIM_FEEDBACK_TIMEOUT)
-    assert arm.config.control_rate_hz == shipped.control_rate_hz and arm.config.joints == shipped.joints
+    assert arm.config.control_rate_hz == min(shipped.control_rate_hz, testing.SIM_CONTROL_RATE_HZ)
+    assert arm.config.joints == shipped.joints and arm.config.max_velocity == shipped.max_velocity
 
 
 def test_unknown_joint_is_named():

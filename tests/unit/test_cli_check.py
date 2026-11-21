@@ -72,7 +72,7 @@ def test_sine_measures_a_known_lag(bench, tmp_path):
     assert elbow["max_error"] >= elbow["rms_error"] and elbow["temperature_rise"] == 0.0
     with open(path) as f:
         rows = list(csv.DictReader(f))
-    assert len(rows) == doc["samples"] > 100
+    assert len(rows) == doc["samples"] >= 20      # sampled at the control rate throughout the 1.5 s
     assert set(rows[0]) == {"t", "elbow_flex_cmd", "elbow_flex_pos", "elbow_flex_torque", "elbow_flex_temp"}
 
 
