@@ -75,9 +75,12 @@ class SimulatedMotors:
 
 def simulation_timing(config: ArmConfig) -> ArmConfig:
     """A copy of ``config`` whose feedback deadline is at least SIM_FEEDBACK_TIMEOUT and control rate
-    at most SIM_CONTROL_RATE_HZ, for simulated motors on a machine that may starve the control loop."""
+    at most SIM_CONTROL_RATE_HZ (the per-tick startup step scaled to keep its speed), for simulated
+    motors on a machine that may starve the control loop."""
+    rate = min(config.control_rate_hz, SIM_CONTROL_RATE_HZ)
     return dataclasses.replace(config, feedback_timeout=max(config.feedback_timeout, SIM_FEEDBACK_TIMEOUT),
-                               control_rate_hz=min(config.control_rate_hz, SIM_CONTROL_RATE_HZ))
+                               control_rate_hz=rate,
+                               startup_step=config.startup_step * config.control_rate_hz / rate)  # same rad/s
 
 
 def _config(config: ConfigLike) -> ArmConfig:

@@ -79,6 +79,8 @@ def test_simulated_arms_relax_only_the_loop_timing():
     arm, _ = testing.simulated_arm()
     assert arm.config.feedback_timeout == max(shipped.feedback_timeout, testing.SIM_FEEDBACK_TIMEOUT)
     assert arm.config.control_rate_hz == min(shipped.control_rate_hz, testing.SIM_CONTROL_RATE_HZ)
+    assert arm.config.startup_step * arm.config.control_rate_hz == pytest.approx(
+        shipped.startup_step * shipped.control_rate_hz)                    # the same startup speed, rad/s
     assert arm.config.joints == shipped.joints and arm.config.max_velocity == shipped.max_velocity
 
 
