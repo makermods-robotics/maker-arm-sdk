@@ -1,6 +1,5 @@
 """The rest command on simulated motors: an arm left energized or one with torque off."""
 
-import os
 import signal
 
 import pytest
@@ -50,7 +49,7 @@ def test_a_signal_during_rest_keeps_the_arm_holding(bench, monkeypatch, sig):
     move_to = sdk.arm.Arm.move_to
 
     def interrupted(self, *args, **kwargs):
-        os.kill(os.getpid(), sig)
+        signal.raise_signal(sig)
         return move_to(self, *args, **kwargs)
 
     monkeypatch.setattr(sdk.arm.Arm, "move_to", interrupted)

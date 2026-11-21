@@ -509,7 +509,9 @@ class Arm:
 
     def _go_enabled(self, start_loop: bool) -> None:
         now = time.monotonic()
-        self._poll_sent = {m.motor_id: now for m in self.motors}
+        # Each motor's next status poll is due from its last status reply, so a slow enable
+        # cannot leave a reply older than the status deadline.
+        self._poll_sent = {m.motor_id: now - min(m.status_age, now) for m in self.motors}
         self._state = ArmState.ENABLED
         if start_loop:
             self._running = True
@@ -1064,12 +1066,15 @@ class Arm:
         if worst <= cfg.rest_arrived:
             return True
         period = 1.0 / cfg.rest_rate_hz
-        steps = max(1, math.ceil(worst / cfg.rest_speed * cfg.rest_rate_hz))
-        deadline = time.monotonic() + cfg.rest_timeout
-        for k in range(1, steps + 1):
+        duration = worst / cfg.rest_speed
+        began = time.monotonic()
+        deadline = began + cfg.rest_timeout
+        frac = 0.0
+        while frac < 1.0:
+            # The ramp follows the clock, so late wake-ups do not slow it below rest_speed.
+            frac = min(1.0, max(period, time.monotonic() - began) / duration)
             if time.monotonic() >= deadline or not self._rest_active():
                 break
-            frac = k / steps
             with self._target_lock:
                 for i in include:
                     self._user_targets[i] = start[i] + (rest[i] - start[i]) * frac
