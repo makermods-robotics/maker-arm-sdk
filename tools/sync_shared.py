@@ -21,7 +21,8 @@ PKG = "pkg"
 # Byte-identical in both repos (globs; a path may exist in neither repo yet).
 SHARED = [
     "pkg/__init__.py", "pkg/arm.py", "pkg/bus.py", "pkg/cameras.py", "pkg/config.py", "pkg/errors.py",
-    "pkg/gravity.py", "pkg/gripper.py", "pkg/kinematics.py", "pkg/mapping.py", "pkg/rig.py",
+    "pkg/gravity.py", "pkg/gripper.py", "pkg/kinematics.py", "pkg/mapping.py", "pkg/realtime.py", "pkg/rig.py",
+    "pkg/_planner.py",
     "pkg/stall.py", "pkg/teleop.py", "pkg/testing.py", "pkg/trajectory_ik.py", "pkg/trajectory_ik_jax.py",
     "pkg/cli/*.py", "pkg/leaders/*.py", "pkg/transport/*.py", "pkg/profiles/__init__.py",
     "tests/conftest.py",
@@ -32,7 +33,7 @@ SHARED = [
     "tests/unit/test_cameras.py", "tests/unit/test_check_all_motors.py", "tests/unit/test_cli*.py",
     "tests/unit/test_config.py", "tests/unit/test_errors.py", "tests/unit/test_gravity.py",
     "tests/unit/test_gripper.py", "tests/unit/test_import.py", "tests/unit/test_kinematics.py",
-    "tests/unit/test_layout.py", "tests/unit/test_leaders.py", "tests/unit/test_mapping.py",
+    "tests/unit/test_layout.py", "tests/unit/test_leaders.py", "tests/unit/test_mapping.py", "tests/unit/test_planner.py", "tests/unit/test_realtime.py",
     "tests/unit/test_rig.py", "tests/unit/test_slcan_codec.py", "tests/unit/test_socketcan_frames.py",
     "tests/unit/test_stall.py", "tests/unit/test_sync_shared.py", "tests/unit/test_teleop.py",
     "tests/unit/test_testing.py",

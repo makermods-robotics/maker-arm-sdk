@@ -6,6 +6,7 @@ import struct
 import threading
 from typing import Callable, Optional
 
+from .. import realtime
 from .base import CanBackend, CanId
 
 CAN_EFF_FLAG = 0x80000000
@@ -54,6 +55,7 @@ class SocketCanBackend(CanBackend):
             self._sock.send(frame)
 
     def _rx_loop(self) -> None:
+        realtime.pin_to_fast_cpus()   # every reply passes through here: keep it off the slow cores
         while self._running:
             try:
                 buf = self._sock.recv(16)

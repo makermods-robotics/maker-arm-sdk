@@ -141,6 +141,12 @@ elbow_flex, wrist_flex, wrist_yaw, wrist_roll, gripper`.
 Once enabled, the arm runs its own 200 Hz loop. It keeps targets inside the joint limits, limits
 speed, adds gravity compensation, and holds the pose if anything faults.
 
+The loop is a Python thread, so heavy Python work in your own threads (a policy, IK in a loop) slows it: it
+shares the interpreter lock with them. `arm.loop_rate_hz` is the measured rate; below 90 % of the profile's the
+SDK warns once, and each tick still moves by the time that really passed, so speed limits hold. On a big.LITTLE
+board the loop and the CAN receive thread move to the fast cores by themselves, and `move_ee` solves its path in a
+helper process. Set `ARM_SDK_THREAD_TUNING=off` to leave thread placement and the GIL switch interval alone.
+
 ### Your own teleoperation loop
 
 ```python

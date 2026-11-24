@@ -9,6 +9,7 @@ import threading
 import time
 from typing import Callable, Optional
 
+from .. import realtime
 from .base import CanBackend, CanId
 
 log = logging.getLogger(__package__)
@@ -179,6 +180,7 @@ class SlcanSerialBackend(CanBackend):
             self._last_tx = time.monotonic()
 
     def _rx_loop(self) -> None:
+        realtime.pin_to_fast_cpus()   # every reply passes through here: keep it off the slow cores
         parser = SlcanFrameParser()
         while self._running:
             try:

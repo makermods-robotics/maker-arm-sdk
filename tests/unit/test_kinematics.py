@@ -253,3 +253,13 @@ def test_ik_refuses_malformed_input(bad):
     args = dict(target=[0.2, 0.0, 0.2], q0=np.mean(LIMITS, axis=0)) | bad
     with pytest.raises(ValueError):
         chain.ik(args["target"], args["q0"])
+
+
+def test_repo_gravity_float_version_matches_the_numpy_reference():
+    chain = repo_chain()
+    rng = np.random.default_rng(11)
+    for _ in range(50):
+        q = rng.uniform(chain.lower, chain.upper)
+        g = rng.normal(size=3) * 5
+        assert chain.gravity_torques(q, g) == pytest.approx(chain._gravity_torques_numpy(q, g), abs=1e-12)
+        assert chain.gravity_torques(q) == pytest.approx(chain._gravity_torques_numpy(q), abs=1e-12)

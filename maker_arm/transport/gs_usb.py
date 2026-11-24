@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from .. import realtime
 from ..errors import ConnectError
 from .base import CanBackend, CanId
 
@@ -315,6 +316,7 @@ class GsUsbBackend(CanBackend):
             self._in_flight.notify_all()
 
     def _rx_loop(self) -> None:
+        realtime.pin_to_fast_cpus()   # every reply passes through here: keep it off the slow cores
         usb = _usb()
         timeout = self._ms(self.io_timeout)
         while self._running:

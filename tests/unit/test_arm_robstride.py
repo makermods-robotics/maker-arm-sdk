@@ -82,16 +82,28 @@ def test_tick_polls_faults_without_clearing():
     assert "clear" not in fakes[1].log + fakes[2].log
 
 
-def test_status_deadline_counts_from_when_the_loop_took_over():
+def test_status_deadline_counts_from_the_first_unanswered_query():
     arm, _, fakes = enabled_arm()
     answer = fakes[1].handle
     fakes[1].handle = lambda can_id, data: [] if classify(can_id, data)[0] == "status_query" else answer(can_id, data)
     arm.motors[0]._status_time = time.monotonic() - 5.0   # a slow enable: the last reply is old
     arm._tick(0.005)
+    assert arm.state is ArmState.ENABLED                   # nothing was asked yet in this session
+    arm._poll_sent = {1: 0.0, 2: 1e9}
+    arm._tick(0.005)                                       # asks motor 1, which never answers
     assert arm.state is ArmState.ENABLED
-    arm._polling_since -= 1.0                              # the loop has been asking for a second
+    arm._awaiting_status[0] -= 1.0                         # ... for a second
     arm._tick(0.005)
     assert arm.state is ArmState.FAULT and "no fault-status reply" in arm.fault_reason
+
+
+def test_a_loop_that_could_not_poll_is_not_a_missing_status_reply():
+    arm, _, fakes = enabled_arm()
+    arm._poll_sent = {1: 0.0, 2: 1e9}
+    arm._tick(0.005)                                       # motor 1 answers this query
+    arm.motors[0]._status_time = time.monotonic() - 5.0    # then the loop did not run for five seconds
+    arm._tick(0.005)
+    assert arm.state is ArmState.ENABLED
 
 
 def test_modern_firmware_leaving_run_mode_faults():

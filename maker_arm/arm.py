@@ -15,7 +15,7 @@ from typing import Callable, Optional, Sequence
 
 import numpy as np
 
-from . import gravity, kinematics, trajectory_ik
+from . import _planner, gravity, kinematics, realtime, trajectory_ik
 from ._product import CLI_NAME
 from .config import ArmConfig, JointConfig, check_gains
 from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout, StateError
@@ -24,10 +24,18 @@ from .motor import ID_RANGE, Motor, route
 from .transport.base import CanBackend, create_backend
 
 log = logging.getLogger(__package__)
-# move_ee: how far the planned path may end from the goal (m, rad).
-EE_POSITION_TOL = 1e-3
-EE_ANGLE_TOL = math.radians(0.5)
-EE_MIN_SECONDS = 0.25   # shortest path
+# move_ee: how far the planned path may end from the goal (m, rad), and its shortest duration (s).
+EE_POSITION_TOL = _planner.EE_POSITION_TOL
+EE_ANGLE_TOL = _planner.EE_ANGLE_TOL
+EE_MIN_SECONDS = _planner.EE_MIN_SECONDS
+# A late control tick advances the commands by the time that really passed, up to this many periods, so speed
+# limits hold in real time when the computer cannot keep the profile's rate.
+MAX_TICK_PERIODS = 4
+# Start-to-start spacing of the frames one tick sends: about one command and its reply on a 1 Mbit/s bus. A send
+# that itself takes longer (a slow USB round trip) needs no extra wait.
+FRAME_SPACING_S = 200e-6
+LOOP_RATE_WINDOW_S = 1.0   # loop_rate_hz is measured over this window
+SLOW_LOOP_SHARE = 0.9      # below this share of control_rate_hz for two windows: warn once per session
 
 
 class ArmState(Enum):
@@ -50,6 +58,7 @@ class Arm:
     REPLY_ATTEMPTS = 3
     PARAM_TIMEOUT = 0.12   # s, typed parameter replies
     FLOAT_KD = 0.1         # damping used by float_mode()
+    PLAN_IN_HELPER = True  # move_ee solves its path in a helper process (_planner.py); False: in this process
 
     def __init__(self, config: ArmConfig, backend: CanBackend):
         config._validate()
@@ -79,12 +88,17 @@ class Arm:
         self._hold_out: dict[int, tuple[int, float, float, float]] = {}   # seq, position, kp, kd
         self._release_sent: dict[int, float] = {}
         self._poll_sent: dict[int, float] = {}
-        self._polling_since = 0.0             # when the control loop took over status polling
         self._gravity = None
         self._extra_torque: Optional[ExtraTorque] = None   # float_mode(extra_torque=...)
         self._floating = False                # float_mode() until set_gains() or a fault
         self._chain: Optional[tuple[tuple, kinematics.Chain]] = None   # (profile key, chain)
         self._tick_count = 0
+        self.loop_rate_hz: Optional[float] = None   # measured control-loop rate, None until measured
+        self._rate_window = (0.0, 0)                # (start, tick count at start)
+        self._slow_windows = 0
+        # Per motor, when the oldest command (status query) still unanswered went out; None: nothing outstanding.
+        self._awaiting: list[Optional[float]] = [None] * n
+        self._awaiting_status: list[Optional[float]] = [None] * n
         self._running = False
         self._loop_thread: Optional[threading.Thread] = None
         self.fault_reason: Optional[str] = None
@@ -301,7 +315,9 @@ class Arm:
                 "fault": m.fault_latched or (st.text if st is not None and st.has_fault else None),
                 "feedback_age": _finite(m.feedback_age),
             }
-        return {"state": self._state.value, "fault_reason": self.fault_reason, "joints": joints}
+        rate = self.loop_rate_hz
+        return {"state": self._state.value, "fault_reason": self.fault_reason,
+                "loop_rate_hz": None if rate is None else round(rate, 1), "joints": joints}
 
     # ── gripper (the joint named "gripper") ──
     def _gripper_range(self) -> tuple[int, float, float]:
@@ -513,7 +529,12 @@ class Arm:
         # Each motor's next status poll is due from its last status reply, so a slow enable
         # cannot leave a reply older than the status deadline.
         self._poll_sent = {m.motor_id: now - min(m.status_age, now) for m in self.motors}
-        self._polling_since = now
+        # enable()/attach() asked every motor already; the loop's first frames follow at once.
+        self._awaiting = [now] * len(self.motors)
+        self._awaiting_status = [None] * len(self.motors)
+        self.loop_rate_hz = None
+        self._rate_window = (now, self._tick_count)
+        self._slow_windows = 0
         self._state = ArmState.ENABLED
         if start_loop:
             self._running = True
@@ -852,7 +873,8 @@ class Arm:
 
         The path starts at the commanded pose and eases in and out (minimum jerk); each control tick of it is
         solved by the numpy trajectory IK (trajectory_ik.py; never the JAX one, whose first solve compiles for tens
-        of seconds) and streamed through the joint targets, so no tick moves
+        of seconds) in a helper process, so the solve never holds up the control loop (the first call starts the
+        helper, about a second), and streamed through the joint targets, so no tick moves
         a joint further than its speed allows and a small tool move stays a small joint move. Joints past the
         chain (the gripper) keep their command. Refused (False, nothing sent) when not ENABLED or when the end
         pose is out of reach within the soft limits. With ``wait`` it blocks until arrival as move_to() does
@@ -873,33 +895,12 @@ class Arm:
         ik = trajectory_ik.TrajectoryIK.from_config(cfg, chain=chain)
         current = self.get_commanded_positions()
         q0 = np.asarray(current[:chain.n], dtype=float)
-        end = chain.ik(target, np.clip(q0, ik.lo, ik.hi), rpy=None if rpy is None else [float(v) for v in rpy],
-                       limits=(ik.lo, ik.hi))
-        if not end.ok:
-            log.warning("move_ee rejected: no solution within the limits (%.1f mm, %.2f deg off)",
-                        end.pos_err * 1e3, math.degrees(end.rot_err))
-            return False
-        start, goal = chain.fk(q0), chain.fk(end.q)
-        goal[:3, 3] = target
-        if rpy is not None:
-            goal[:3, :3] = kinematics.rpy_to_matrix([float(v) for v in rpy])
-        rate = cfg.control_rate_hz
-        speeds = np.minimum(ik.max_velocity, math.inf if speed is None else speed)
-        # Minimum jerk peaks at 1.875x the mean speed; a path the cap still shortens is retimed slower.
-        seconds = max(EE_MIN_SECONDS, 1.25 * float(np.max(1.875 * np.abs(np.asarray(end.q) - q0) / speeds)))
-        ticks = int(math.ceil(seconds * rate))
-        for _ in range(4):
-            # the goal held a while at the end lets the smoothed solve settle onto it
-            hold = max(int(math.ceil(EE_MIN_SECONDS * rate / 2)), ticks // 5)
-            poses = trajectory_ik.straight_line(start, goal, ticks)
-            poses = np.concatenate([poses, np.repeat(goal[None], hold, axis=0)])
-            plan = trajectory_ik.solve_path(ik, poses, q0, rate, speed)
-            if not plan.capped.any():
-                break
-            ticks = int(math.ceil(ticks * 1.5))
-        if plan.pos_err[-1] > EE_POSITION_TOL or plan.rot_err[-1] > EE_ANGLE_TOL:
-            log.warning("move_ee rejected: the path ends %.1f mm, %.2f deg off the goal",
-                        plan.pos_err[-1] * 1e3, math.degrees(plan.rot_err[-1]))
+        # Solved in a helper process (_planner.py): an in-process solve holds the interpreter lock the control loop
+        # and the CAN receive thread need, and starved them on small computers.
+        plan = _planner.plan(chain, ik, target, None if rpy is None else [float(v) for v in rpy], q0,
+                             cfg.control_rate_hz, speed, isolated=self.PLAN_IN_HELPER)
+        if plan.q is None:
+            log.warning("move_ee rejected: %s", plan.reason)
             return False
         rows = [q.tolist() + current[chain.n:] for q in plan.q]
         if cancel is not None and cancel.is_set():
@@ -1125,7 +1126,7 @@ class Arm:
             if i in self._faulted:
                 log.error("return to rest aborted: %s is faulted", label)
                 return False
-            if not math.isfinite(positions[i]) or self.motors[i].feedback_age > self.config.feedback_timeout:
+            if not math.isfinite(positions[i]) or self._reply_late(i) > self.config.feedback_timeout:
                 log.error("return to rest aborted: %s feedback is stale", label)
                 return False
         return True
@@ -1166,6 +1167,7 @@ class Arm:
             commands = list(self._internal)
         feedforward = self._feedforward(commands, now)
         paced = self._backend.feedback_paced_control
+        last_send = None
         for i, j in enumerate(cfg.joints):
             if not self._may_send(session):
                 return
@@ -1186,18 +1188,24 @@ class Arm:
                 hold = self._hold.get(i)
                 if hold is not None and i not in self._faulted and kp > 0:
                     position, kp, kd = self._gripper_command(i, j, hold, commands[i], now)
+                if last_send is not None:
+                    # Space the frames so the replies never burst into a small adapter FIFO.
+                    gap = FRAME_SPACING_S - (time.perf_counter() - last_send)
+                    if gap > 0:
+                        self._busy_wait_us(gap * 1e6)
+                last_send = time.perf_counter()
+                sent_at = time.monotonic()
                 motor.send_command(self._to_motor(i, position), 0.0, kp, kd, feedforward[i])
             except Exception as e:
                 if i not in self._faulted:
                     self._enter_fault(f"{j.label}: command failed ({e})", i)
                 continue
+            self._awaiting[i] = self._still_awaiting(self._awaiting[i], motor.feedback_age, sent_at)
             if paced:
                 # Old USB-SLCAN firmware has no outbound USB queue and a three-frame CAN RX
                 # FIFO: wait for this reply before commanding the next motor. A timeout does not
                 # skip the remaining motors; the feedback watchdog makes the safety decision.
                 self._wait_reply(motor, sequence, self._backend.feedback_wait_timeout)
-            else:
-                self._busy_wait_us(150)
         # Non-clearing status poll: at most one motor per tick (the longest-waiting one) so the
         # replies never burst into a small adapter FIFO.
         due = [(self._poll_sent.get(m.motor_id, 0.0), i) for i, m in enumerate(self.motors)
@@ -1206,12 +1214,44 @@ class Arm:
             sent_at, i = min(due)
             if now - sent_at >= cfg.fault_poll_interval:
                 self._poll_sent[self.motors[i].motor_id] = now
+                if last_send is not None:
+                    gap = FRAME_SPACING_S - (time.perf_counter() - last_send)
+                    if gap > 0:
+                        self._busy_wait_us(gap * 1e6)
                 try:
+                    sent_at = time.monotonic()
                     self.motors[i].poll_status()
+                    self._awaiting_status[i] = self._still_awaiting(self._awaiting_status[i],
+                                                                    self.motors[i].status_age, sent_at)
                 except Exception as e:
                     log.error("fault query to motor %d failed: %s", self.motors[i].motor_id, e)
         self._tick_count += 1
         self._check_health()
+
+    @staticmethod
+    def _still_awaiting(since: Optional[float], reply_age: float, sent_at: float) -> float:
+        """When the oldest unanswered request to a motor went out, given one more sent at ``sent_at``: ``since``
+        while no reply has come after it, else ``sent_at``. ``reply_age``: age of the motor's latest reply
+        (feedback_age or status_age)."""
+        if since is None or time.monotonic() - reply_age >= since:
+            return sent_at
+        return since
+
+    @staticmethod
+    def _late(since: Optional[float], reply_age: float) -> float:
+        """How long the oldest request sent at ``since`` has gone unanswered (0 when answered or none is out).
+        Measured from the request, not from the last reply, so a control loop that could not run for a while
+        (a stalled computer) is not taken for a silent motor."""
+        now = time.monotonic()
+        if since is None or now - reply_age >= since:
+            return 0.0
+        return now - since
+
+    def _reply_late(self, i: int) -> float:
+        """Seconds the oldest command to motor ``i`` has gone without a reply (outside a session: its feedback age)."""
+        m = self.motors[i]
+        since = self._awaiting[i]
+        return m.feedback_age if since is None else self._late(since, m.feedback_age)
 
     def _make_gravity(self) -> Optional[gravity.GravityFeedforward]:
         """This session's gravity feed-forward, or None (no URDF or gravity_scale 0). Raises
@@ -1288,16 +1328,32 @@ class Arm:
         return min(present + cfg.startup_step, max(present - cfg.startup_step, goal))
 
     def _control_loop(self, session: int) -> None:
+        # On a big.LITTLE computer the loop runs on the fast cores, and while it runs other Python threads give
+        # up the interpreter lock sooner (realtime.py).
+        realtime.pin_to_fast_cpus()
+        realtime.switch_interval.acquire()
+        try:
+            self._run_loop(session)
+        finally:
+            realtime.switch_interval.release()
+
+    def _run_loop(self, session: int) -> None:
         dt = 1.0 / self.config.control_rate_hz
-        next_t = time.perf_counter()
+        next_t = last = time.perf_counter()
         while self._may_send(session):
+            # Commands advance by the time that really passed since the previous tick (at most a few periods), so
+            # a computer that cannot keep the profile's rate still moves the arm at the commanded speed.
+            started = time.perf_counter()
+            elapsed = min(max(dt, started - last), MAX_TICK_PERIODS * dt)
+            last = started
             try:
-                self._tick(dt, session)
+                self._tick(elapsed, session)
             except Exception as e:
                 # Never abandon energized motors: the hold only exists while commands go out,
                 # so keep servicing (and reporting) until disable()/estop().
                 if self._state is ArmState.ENABLED or len(self.fault_reasons) < 100:
                     self._enter_fault(f"control loop exception: {e}")
+            self._measure_rate()
             next_t += dt
             remain = next_t - time.perf_counter()
             if remain > 0:
@@ -1305,26 +1361,45 @@ class Arm:
             else:
                 next_t = time.perf_counter()   # if we've fallen behind, reset rather than trying to catch up
 
+    def _measure_rate(self) -> None:
+        """Update loop_rate_hz once per LOOP_RATE_WINDOW_S; warn once per session when the loop is slow."""
+        now = time.monotonic()
+        start, ticks = self._rate_window
+        if now - start < LOOP_RATE_WINDOW_S:
+            return
+        self.loop_rate_hz = (self._tick_count - ticks) / (now - start)
+        self._rate_window = (now, self._tick_count)
+        target = self.config.control_rate_hz
+        if self.loop_rate_hz < SLOW_LOOP_SHARE * target:
+            self._slow_windows += 1
+            if self._slow_windows == 2:
+                log.warning("the control loop runs at %.0f Hz, below the profile's %.0f Hz: this computer cannot "
+                            "keep up. Speed limits still hold (each tick moves by the time that passed); fewer "
+                            "programs, or a faster computer, restore the rate", self.loop_rate_hz, target)
+        else:
+            self._slow_windows = 0
+
     def _check_health(self) -> None:
         """Evaluated every tick, in FAULT too: a second motor can still fail while holding."""
         if self._state not in (ArmState.ENABLED, ArmState.FAULT):
             return
         cfg = self.config
         status_deadline = 2 * cfg.fault_poll_interval + cfg.feedback_timeout
-        # Only the control loop asks for status, so a reply's age counts from when it took over.
-        polling_for = time.monotonic() - self._polling_since
+        # Silence counts from the oldest unanswered command or status query, not from the last reply: a loop that
+        # could not run (or poll) for a while has not heard from the motors because it did not ask.
         for i, (m, j) in enumerate(zip(self.motors, cfg.joints)):
             if self._skipped(i):
                 continue
             reason = None
             fb = m.feedback
-            status_age = min(m.status_age, polling_for)
-            if m.feedback_age > cfg.feedback_timeout:
-                reason = f"feedback timeout {m.feedback_age:.2f}s -- check bus/power"
+            late = self._late(self._awaiting[i], m.feedback_age)
+            status_late = self._late(self._awaiting_status[i], m.status_age)
+            if late > cfg.feedback_timeout:
+                reason = f"feedback timeout {late:.2f}s -- check bus/power"
             elif m.fault_latched:
                 reason = f"motor fault -- {m.fault_latched}"
-            elif status_age > status_deadline:
-                reason = f"no fault-status reply for {status_age:.2f}s"
+            elif status_late > status_deadline:
+                reason = f"no fault-status reply for {status_late:.2f}s"
             elif j.max_temperature_c is not None and fb.temperature >= j.max_temperature_c:
                 reason = f"overtemperature {fb.temperature:.1f} °C (limit {j.max_temperature_c:.0f} °C)"
             elif j.warning_is_fault and fb.warning:

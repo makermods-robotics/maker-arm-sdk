@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- The control loop keeps its rate on small computers. On a big.LITTLE board (Cortex-A53 + A72, gs_usb) it held
+  about 147 Hz at rest and fell to 20 Hz while `move_ee` solved its path, until the arm faulted on stale feedback;
+  now about 192 Hz at rest and 199 Hz during `move_ee` planning.
+  - `move_ee` solves its path in a helper process (`_planner.py`), so the solve no longer holds the interpreter
+    lock the control loop and the CAN receive thread need. Falls back to solving in-process if no helper starts.
+  - The control loop and the receive threads run on the fastest cores of a big.LITTLE CPU, and while a loop runs
+    the GIL switch interval is 0.5 ms instead of 5 ms (`realtime.py`; `ARM_SDK_THREAD_TUNING=off` leaves both
+    alone). Computers whose cores are all alike are not pinned.
+  - Less work per tick: the gravity model in Python floats (3-5x faster), and frames are spaced 200 us start to
+    start instead of 150 us after each send, so a slow USB write is not followed by a needless wait.
+- A computer that cannot keep the profile's rate is reported and stays safe: `Arm.loop_rate_hz` (also in
+  `status()`), a warning once per session below 90 % of the rate, and each tick moves the commands by the time
+  that really passed (up to four periods), so speed limits hold in real time.
+- Feedback and fault-status silence count from the oldest unanswered command or query, not from the last reply:
+  a control loop that could not run for a while is no longer reported as a motor feedback timeout.
+
 ## 0.1.0
 
 First release of the Maker Arm SDK (RobStride motors, MIT protocol).
