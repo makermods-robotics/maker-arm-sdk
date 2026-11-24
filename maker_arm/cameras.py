@@ -353,6 +353,7 @@ class Camera:
         self._stamp = 0.0
         self._captured = 0.0
         self._count = 0
+        self._skipped_before = 0   # skipped by url: captures already released
         self._cond = threading.Condition()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -368,6 +369,18 @@ class Camera:
     @property
     def is_open(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def frames(self) -> int:
+        """Frames captured since this camera was created (every one, whether or not anyone read it)."""
+        return self._count
+
+    @property
+    def skipped(self) -> int:
+        """For a url: camera, JPEGs that arrived but were replaced by a newer one before they were decoded
+        (the reader keeps only the newest); 0 for other cameras."""
+        return getattr(self._cap, "dropped", 0) + self._skipped_before
+
 
     def _open_capture(self):
         cv2 = _cv2()
@@ -442,6 +455,7 @@ class Camera:
 
     def _release(self) -> None:
         cap, self._cap = self._cap, None
+        self._skipped_before += getattr(cap, "dropped", 0)
         if cap is not None:
             try:
                 cap.release()

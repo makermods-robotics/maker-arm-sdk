@@ -4,6 +4,7 @@
   cameras list                                            USB cameras found, and the rig's url: cameras
   cameras snapshot [--camera NAME|ID ...] [--out DIR]     default: every rig camera, else every camera
   cameras stream [--camera ...] [--seconds 5]             fps and frame age per camera; no window
+Stream counts every frame each camera captured; frame age is sampled as frames arrive.
 """
 
 from __future__ import annotations
@@ -46,30 +47,38 @@ def snapshot(a, out, rig) -> dict:
 
 
 def stream(a, out, rig) -> dict:
+    """Every camera's captured-frame count over the window (Camera.frames), and the age of each new frame seen
+    by polling newest(): waiting on one camera's read() at a time would miss frames the others sent meanwhile."""
     cams = chosen(a, rig)
-    stats = {label: {"frames": 0, "age_sum": 0.0, "max_age": 0.0} for label, _ in cams}
+    stats = {label: {"seen": 0, "age_sum": 0.0, "max_age": 0.0, "last": None} for label, _ in cams}
     with ExitStack() as stack:
         opened = {label: stack.enter_context(rig.camera(cam_id)) for label, cam_id in cams}
+        first = {label: (cam.frames, cam.skipped) for label, cam in opened.items()}
         t0 = time.monotonic()
         while time.monotonic() - t0 < a.seconds:
             for label, cam in opened.items():
-                try:
-                    _, stamp = cam.read(timeout=0.2)
-                except TimeoutError:
-                    continue
-                age = max(0.0, time.time() - stamp)
+                frame = cam.newest()
                 s = stats[label]
-                s["frames"] += 1
+                if frame is None or frame.captured == s["last"]:
+                    continue
+                s["last"] = frame.captured
+                age = frame.age_s
+                s["seen"] += 1
                 s["age_sum"] += age
                 s["max_age"] = max(s["max_age"], age)
+            time.sleep(0.002)
         elapsed = time.monotonic() - t0
+        counts = {label: (cam.frames - first[label][0], cam.skipped - first[label][1])
+                  for label, cam in opened.items()}
     result = {}
     for label, s in stats.items():
-        fps = s["frames"] / elapsed
-        mean_age = s["age_sum"] / s["frames"] if s["frames"] else None
-        result[label] = {"fps": fps, "frames": s["frames"], "mean_age_s": mean_age, "max_age_s": s["max_age"]}
-        out.say(f"{label:<24} {fps:5.1f} fps  frame age mean "
-                f"{(mean_age or 0) * 1000:5.1f} ms, max {s['max_age'] * 1000:5.1f} ms")
+        frames, skipped = counts[label]
+        fps = frames / elapsed
+        mean_age = s["age_sum"] / s["seen"] if s["seen"] else None
+        result[label] = {"fps": fps, "frames": frames, "skipped": skipped, "mean_age_s": mean_age,
+                         "max_age_s": s["max_age"]}
+        out.say(f"{label:<24} {fps:5.1f} fps  frame age mean {(mean_age or 0) * 1000:5.1f} ms, "
+                f"max {s['max_age'] * 1000:5.1f} ms" + (f"  ({skipped} skipped for newer)" if skipped else ""))
     return {"ok": all(r["frames"] for r in result.values()), "seconds": elapsed, "cameras": result}
 
 

@@ -144,6 +144,16 @@ class FakeCamera:
 
     def __init__(self, cam_id, **_):
         self.id = cam_id
+        self.skipped = 0
+        self._opened = time.monotonic()
+
+    @property
+    def frames(self):
+        return int((time.monotonic() - self._opened) / 0.01)   # one frame every 10 ms
+
+    def newest(self, max_age_s=None):
+        captured = self._opened + 0.01 * self.frames
+        return sdk.cameras.Frame(self.scene(self.id), time.time() - (time.monotonic() - captured), captured)
 
     def __enter__(self):
         return self
