@@ -124,11 +124,11 @@ def test_a_late_tick_advances_by_the_time_that_passed_up_to_a_cap(monkeypatch):
 
 
 def test_loop_rate_is_measured_and_reported(monkeypatch):
-    monkeypatch.setattr(sdk.arm, "LOOP_RATE_WINDOW_S", 0.05)
+    monkeypatch.setattr(sdk.arm, "LOOP_RATE_WINDOW_S", 0.1)
     arm, _, _ = enabled_arm(control_rate_hz=100.0)
     assert arm.status()["loop_rate_hz"] is None
-    run_loop(arm, 0.3)
-    assert 20 < arm.loop_rate_hz <= 110
+    run_loop(arm, 0.45)
+    assert 20 < arm.loop_rate_hz <= 130   # a late tick's successor can come early: one extra tick per window
     assert arm.status()["loop_rate_hz"] == pytest.approx(arm.loop_rate_hz, abs=0.1)
     arm.disable()
 
