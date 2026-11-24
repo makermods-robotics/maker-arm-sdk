@@ -35,7 +35,7 @@ import yaml
 
 from ._product import CLI_NAME, DEFAULT_PROFILE
 from .arm import Arm, ArmState
-from .cameras import Camera
+from .cameras import Camera, is_camera_id
 from .config import ArmConfig
 from .errors import ArmError
 from .leaders import ArmLeader, StarLeader
@@ -282,10 +282,10 @@ class Rig:
         return self.spec(name).build(self.base, profile)
 
     def camera_id(self, name: str) -> str:
-        """A rig camera name's id; an id (``usb:``, ``path:``, ``index:``) passes through."""
+        """A rig camera name's id; an id (``usb:``, ``path:``, ``index:``, ``url:http...``) passes through."""
         if name in self.cameras:
             return self.cameras[name]
-        if name.split(":", 1)[0] in ("usb", "path", "index"):
+        if is_camera_id(name):
             return name
         known = ", ".join(self.cameras) or "none"
         raise RigError(f"no camera named {name!r} in {self.path or 'the rig'} (cameras: {known})")

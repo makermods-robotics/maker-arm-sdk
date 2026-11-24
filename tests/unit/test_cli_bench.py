@@ -265,3 +265,13 @@ def test_clear_faults_reports_a_fault_that_stays(bench, monkeypatch):
     gripper.handle = stubborn
     doc = bench.json("clear-faults", code=1)
     assert doc["arms"]["arm"]["still_faulted"] == ["gripper"] and doc["arms"]["arm"]["cleared"] == []
+
+
+def test_rig_takes_url_cameras(bench):
+    url = "url:http://127.0.0.1:8090/front/stream.mjpg"
+    assert bench.run("rig", "set-camera", "front", url)[0] == 0
+    assert bench.json("rig", "show")["rig"]["cameras"] == {"front": url}
+    assert rig_module.Rig.load(bench.rig_path).camera("front").id == url
+    assert rig_module.Rig.load(bench.rig_path).camera_id(url) == url   # an id passes through
+    code, _, err = bench.run("rig", "set-camera", "side", "url:ftp://host/x")
+    assert code == 1 and "url:http" in err

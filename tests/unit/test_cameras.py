@@ -204,3 +204,99 @@ def test_missing_opencv_names_the_extra(monkeypatch):
     monkeypatch.setitem(sys.modules, "cv2", None)
     with pytest.raises(ImportError, match=r"\[cameras\]"):
         cameras._cv2()
+
+
+# ── url: cameras (a local HTTP server; no hardware) ──
+from mjpeg_server import MjpegServer  # noqa: E402
+
+
+@pytest.fixture
+def mjpeg():
+    servers = []
+
+    def start(**kw):
+        servers.append(MjpegServer(**kw))
+        return servers[-1]
+
+    yield start
+    for s in servers:
+        s.close()
+
+
+def gray(frame):
+    return int(round(float(frame.mean())))
+
+
+def test_url_ids_resolve_and_are_recognized():
+    assert cameras.resolve("url:http://127.0.0.1:8090/front/stream.mjpg") == "http://127.0.0.1:8090/front/stream.mjpg"
+    assert cameras.is_camera_id("url:https://cam.local/x.mjpg") and cameras.is_camera_id("usb:abc")
+    assert not cameras.is_camera_id("url:ftp://x") and not cameras.is_camera_id("front")
+    with pytest.raises(ValueError):
+        cameras.resolve("url:ftp://x")
+    info = cameras.url_camera_info("url:http://h/s.mjpg")
+    assert info.id == "url:http://h/s.mjpg" and info.path == "http://h/s.mjpg"
+
+
+def test_url_stream_gives_the_newest_frame_never_a_backlog(mjpeg):
+    server = mjpeg(fps=200.0)
+    with cameras.Camera(f"url:{server.base}/stream.mjpg") as cam:
+        for _ in range(4):
+            time.sleep(0.25)                       # a slow reader: about 50 frames arrive meanwhile
+            frame = cam.newest()
+            assert frame is not None and frame.age_s < 0.1
+            # the frame shown is one of the last few sent, not the next one in a queue
+            assert (server.sent - gray(frame.image)) % 250 <= 10
+        assert cam._cap.dropped > 50 and cam._cap.received >= server.sent - 10
+        fresh = cam.read(timeout=1.0)
+        assert fresh.age_s < 0.1 and abs(fresh.stamp - time.time()) < 0.5
+
+
+def test_url_stream_stamps_frames_when_they_arrive(mjpeg):
+    server = mjpeg(fps=50.0, part_headers=b"X-Frame-Age-Ms: 200.0\r\n")
+    with cameras.Camera(f"url:{server.base}/stream.mjpg") as cam:
+        time.sleep(0.2)
+        frame = cam.newest()
+        assert 0.2 <= frame.age_s < 0.35            # the server says each frame was 200 ms old when sent
+        stamps = [cam.read(timeout=1.0).stamp for _ in range(3)]
+        assert stamps == sorted(stamps) and time.time() - stamps[-1] >= 0.2
+
+
+def test_url_stream_without_content_length(mjpeg):
+    server = mjpeg(fps=100.0)
+    with cameras.Camera(f"url:{server.base}/nolength.mjpg") as cam:
+        frames = [cam.read(timeout=1.0) for _ in range(5)]
+        assert all(f.image.shape == (48, 64, 3) for f in frames)
+
+
+def test_url_stream_that_drops_is_reopened(mjpeg, monkeypatch):
+    monkeypatch.setattr(cameras, "READ_FAILURE_S", 0.2)
+    monkeypatch.setattr(cameras, "REOPEN_S", 0.05)
+    server = mjpeg(fps=100.0, drop_after=10)
+    with cameras.Camera(f"url:{server.base}/stream.mjpg") as cam:
+        deadline = time.monotonic() + 5.0
+        while cam.reopens < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert cam.reopens >= 2 and server.connections >= 3
+        assert cam.read(timeout=2.0).age_s < 0.2   # frames keep coming after the reconnects
+
+
+def test_url_single_jpeg_is_polled(mjpeg):
+    server = mjpeg()
+    with cameras.Camera(f"url:{server.base}/latest.jpg", fps=20) as cam:
+        a, b = cam.read(timeout=1.0), cam.read(timeout=1.0)
+        assert gray(b.image) != gray(a.image) and b.stamp > a.stamp
+
+
+def test_url_that_is_not_a_camera_fails_open(mjpeg):
+    server = mjpeg()
+    with pytest.raises(OSError, match="text/html"):
+        cameras.Camera(f"url:{server.base}/text").open()
+    with pytest.raises(OSError, match="cannot open"):
+        cameras.Camera("url:http://127.0.0.1:9/none.mjpg").open()
+
+
+def test_url_camera_snapshot(mjpeg, tmp_path):
+    server = mjpeg(fps=50.0)
+    with cameras.Camera(f"url:{server.base}/stream.mjpg") as cam:
+        path = cam.snapshot(tmp_path / "front.jpg")
+    assert path.stat().st_size > 0

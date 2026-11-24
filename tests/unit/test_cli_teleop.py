@@ -268,3 +268,21 @@ def test_identify_counts_only_motion_that_follows_every_cycle():
               {"top": gripper, "wrist": gripper, "other": still}]
     verdict = judge(closed, opened, "top", mirror=False)
     assert verdict["side"] == "left" and verdict["wrist_camera"] == "wrist"
+
+
+def test_cameras_commands_with_a_url_camera(bench, monkeypatch, tmp_path):
+    from mjpeg_server import MjpegServer
+    server = MjpegServer(fps=30.0)
+    try:
+        monkeypatch.setattr(sdk.cameras, "list_cameras", lambda: [])
+        url = f"url:{server.base}/stream.mjpg"
+        bench.write_rig(cameras={"front": url})
+        doc = bench.json("cameras", "list")
+        assert doc["cameras"] == [{"id": url, "index": -1, "name": "MJPEG over HTTP", "path": url[4:],
+                                   "rig_name": "front"}]
+        doc = bench.json("cameras", "snapshot", "--out", tmp_path / "shots")
+        assert (tmp_path / "shots" / "front.jpg").stat().st_size > 0
+        stats = bench.json("cameras", "stream", "--seconds", "1.0")["cameras"]["front"]
+        assert stats["fps"] > 20 and stats["max_age_s"] < 0.2
+    finally:
+        server.close()

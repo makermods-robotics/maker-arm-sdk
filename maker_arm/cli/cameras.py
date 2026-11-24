@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cameras: list them, save a snapshot from each, or measure frame rate and latency.
 
-  cameras list
+  cameras list                                            USB cameras found, and the rig's url: cameras
   cameras snapshot [--camera NAME|ID ...] [--out DIR]     default: every rig camera, else every camera
   cameras stream [--camera ...] [--seconds 5]             fps and frame age per camera; no window
 """
@@ -12,6 +12,7 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 
+from ..cameras import url_camera_info, url_of
 from .common import CliError, add_rig_arg, load_rig, make_parser, run
 from . import ports
 
@@ -76,6 +77,9 @@ def body(a, out) -> dict:
     rig = load_rig(a)
     if a.action == "list":
         found, error = ports.camera_list()
+        # url: cameras cannot be discovered; the rig's are listed (nothing is fetched).
+        found += [{"id": i.id, "index": i.index, "name": i.name, "path": i.path}
+                  for i in (url_camera_info(cam) for cam in rig.cameras.values() if url_of(cam) is not None)]
         names = {v: k for k, v in rig.cameras.items()}
         for c in found:
             out.say(f"{c['id']:<48} {c['path'] or '':<12} {c['name']}" +

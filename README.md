@@ -203,6 +203,11 @@ with Rig.load().camera("top") as cam:
     frame, stamp = cam.read()                   # BGR image, time in seconds
 ```
 
+A camera another program already serves over HTTP (a camera server, mjpg-streamer, an IP camera) is named by
+its URL: `maker-arm rig set-camera front url:http://127.0.0.1:8090/front/stream.mjpg`. A multipart MJPEG stream or
+a single-JPEG URL both work; only the newest frame is kept, frames are stamped when they arrive, and a stream that
+drops is reopened.
+
 Camera ids (`usb:<path>`) stay the same while a camera stays in the same USB port. On Windows cameras
 are not listed; name one by its index, `index:0`.
 

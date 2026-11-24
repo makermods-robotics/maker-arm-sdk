@@ -4,6 +4,7 @@
   rig init [--detect] [--force]        start a file; --detect adds every gs_usb adapter and camera
   rig set-arm left --port gs_usb:<serial>  [--profile P]     (or --backend socketcan --channel can1)
   rig set-camera top usb:<path>
+  rig set-camera front url:http://127.0.0.1:8090/front/stream.mjpg    a camera another program serves
   rig set-leader left --type star --star-port /dev/ttyUSB0 [--map M]
   rig set-leader right --type arm --leader-arm spare
 Each set-* takes --remove. No device is opened.
@@ -11,6 +12,7 @@ Each set-* takes --remove. No device is opened.
 
 from __future__ import annotations
 
+from ..cameras import is_camera_id
 from ..rig import ArmSpec, LeaderSpec, Rig, RigError
 from .common import CliError, add_rig_arg, explicit_spec, make_parser, run
 from . import ports
@@ -64,8 +66,9 @@ def set_camera(rig: Rig, a) -> None:
         rig.camera_id(a.name)
         rig.cameras.pop(a.name)
         return
-    if not a.id or a.id.split(":", 1)[0] not in ("usb", "path", "index"):
-        raise CliError("set-camera needs a camera id: usb:<path>, path:<path> or index:N (see the ports command)")
+    if not a.id or not is_camera_id(a.id):
+        raise CliError("set-camera needs a camera id: usb:<path>, path:<path>, index:N (see the ports command) "
+                       "or url:http://host:port/stream.mjpg (a camera another program serves)")
     rig.cameras[a.name] = a.id
 
 
@@ -112,7 +115,7 @@ def main() -> None:
     p.add_argument("--remove", action="store_true")
     p = sub.add_parser("set-camera")
     p.add_argument("name")
-    p.add_argument("id", nargs="?", help="usb:<path>, path:<path> or index:N")
+    p.add_argument("id", nargs="?", help="usb:<path>, path:<path>, index:N or url:http://...")
     p.add_argument("--remove", action="store_true")
     p = sub.add_parser("set-leader")
     p.add_argument("name", help="the follower arm this leader drives")

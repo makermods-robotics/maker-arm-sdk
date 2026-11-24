@@ -25,7 +25,7 @@ SHARED = [
     "pkg/stall.py", "pkg/teleop.py", "pkg/testing.py", "pkg/trajectory_ik.py", "pkg/trajectory_ik_jax.py",
     "pkg/cli/*.py", "pkg/leaders/*.py", "pkg/transport/*.py", "pkg/profiles/__init__.py",
     "tests/conftest.py",
-    "tests/unit/chain_fixture.py", "tests/unit/teleop_fakes.py",
+    "tests/unit/chain_fixture.py", "tests/unit/mjpeg_server.py", "tests/unit/teleop_fakes.py",
     "tests/unit/test_arm.py", "tests/unit/test_arm_api.py", "tests/unit/test_arm_model.py",
     "tests/unit/test_attach.py",
     "tests/unit/test_bus.py",
