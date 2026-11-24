@@ -66,7 +66,7 @@ def stream(a, out, rig) -> dict:
                 s["seen"] += 1
                 s["age_sum"] += age
                 s["max_age"] = max(s["max_age"], age)
-            time.sleep(0.002)
+            time.sleep(0.005)   # well under a frame period, light enough not to delay the capture threads
         elapsed = time.monotonic() - t0
         counts = {label: (cam.frames - first[label][0], cam.skipped - first[label][1])
                   for label, cam in opened.items()}
