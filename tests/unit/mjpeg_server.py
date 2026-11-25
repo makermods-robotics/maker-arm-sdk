@@ -18,6 +18,7 @@ class MjpegServer:
         cv2 = pytest.importorskip("cv2")
         self.fps, self.drop_after, self.part_headers = fps, drop_after, part_headers
         self.sent = 0
+        self.sent_at = []          # monotonic time of every frame sent on a stream
         self.connections = 0
 
         def jpeg(n):
@@ -81,6 +82,7 @@ class MjpegServer:
                             head += b"Content-Length: " + str(len(data)).encode() + b"\r\n"
                         self.wfile.write(head + b"\r\n" + data + b"\r\n")
                         self.wfile.flush()
+                        server.sent_at.append(time.monotonic())
                         time.sleep(1.0 / server.fps)
                 except ConnectionError:                  # the client closed the stream (aborted on Windows)
                     pass
