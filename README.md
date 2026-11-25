@@ -95,7 +95,7 @@ return to rest cannot be confirmed, the arm keeps holding and the command exits 
 | `release` | Torque off where the arm is: it drops unless it is at rest or supported. |
 | `clear-faults` | Clear motor faults once the cause is fixed. |
 | `zero` | Make the current pose the zero. Stored in the motors. |
-| `set-id` | Change one motor's CAN ID: `set-id --from 7 --to 8`. The motor must be de-energized; it is refused if it reports torque on, holds torque or moves, or if the new ID answers or belongs to another joint. |
+| `set-id` | Change one motor's CAN ID: `set-id --from 7 --to 8`. The motor must be de-energized; it is refused if it reports torque on, holds torque or moves, or if the new ID answers or another joint of the profile has it. |
 
 ## Python
 

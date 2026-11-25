@@ -270,6 +270,16 @@ def test_set_motor_id_refuses_an_id_already_on_the_bus_and_cleans_up():
     assert bus.is_open and arm.refresh() == [True, True]   # the arm's receive path is back
 
 
+def test_set_motor_id_gives_a_motor_the_profile_lacks_the_id_of_a_joint_without_its_motor():
+    # Motor replacement, or a motor moved off its joint's id and back: the joint's own id is free on the bus.
+    arm, bus, fakes = make_arm([FakeMotor(9, position=0.3), FakeMotor(2, position=-0.5)])
+    arm.set_motor_id(9, 1, torque_off_confirmed=True)
+    assert not bus.is_open and arm.config.joints[0].motor_id == 1
+    arm.connect()
+    assert arm.refresh() == [True, True]
+    arm.disconnect()
+
+
 def test_set_motor_id_refuses_an_id_another_joint_has_before_opening_the_bus():
     arm, bus, fakes = make_arm()
     fakes[2].online = False                                 # even when that joint does not answer

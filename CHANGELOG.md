@@ -36,7 +36,7 @@
 - `set-id` (`Arm.set_motor_id`) changes a RobStride motor's CAN ID with MIT command 7, with torque off. The motor
   is read first and refused when it reports a fault or torque on, reads more than 0.03 N*m or moves faster than
   0.3 rad/s, or, where its firmware cannot report torque state, without `torque_off_confirmed=True` (the CLI's
-  confirmation gives it). Refused when the new ID answers or belongs to another joint of the profile; afterwards
+  confirmation gives it). Refused when the new ID answers, or when a joint's motor would take another joint's ID; afterwards
   the motor must answer on the new ID and nothing on the old one.
 - `gravity --check` gives the gravity model the chain's joints only, so it compares the measured holding torque
   with the model on an arm with a gripper.

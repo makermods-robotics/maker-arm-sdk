@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Change a motor's CAN ID (persistent), with torque off. Only that one motor should answer on
-FROM, and it must be de-energized; the command refuses when TO already answers or belongs to another
+FROM, and it must be de-energized; the command refuses when TO already answers or, for a joint's motor, belongs to another
 joint, and when the motor reports torque on, holds torque or moves. Update the profile afterwards.
 """
 
