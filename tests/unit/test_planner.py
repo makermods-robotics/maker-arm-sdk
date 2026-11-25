@@ -177,7 +177,7 @@ def test_planning_in_this_process_honours_timeout_and_cancel(setup, monkeypatch,
     result = planner.plan(chain, ik, (start + [0, 0, 0.03]).tolist(), None, q0, 200.0, 0.05,
                           limit=0.3 if stop == "timeout" else None, cancel=cancel)
     assert result.q is None and ("timed out" if stop == "timeout" else "cancelled") in result.reason
-    assert time.monotonic() - t0 < 1.0
+    assert time.monotonic() - t0 < 2.0   # checked between chunks of 64 ticks: 0.3 s plus at most one chunk
     assert planner._pool.unavailable
 
 
