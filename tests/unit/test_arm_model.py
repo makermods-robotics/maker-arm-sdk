@@ -309,7 +309,7 @@ def test_move_ee_streams_bounded_steps_along_the_line(urdf):
     arm.enable()
     sent = []
     original = arm._set_targets
-    arm._set_targets = lambda targets, speed: sent.append(list(targets)) or original(targets, speed)
+    arm._set_targets = lambda targets, speed, *token: sent.append(list(targets)) or original(targets, speed, *token)
     try:
         start = arm.get_commanded_positions()
         goal, _ = kinematics.pose_to_xyz_rpy(tool_chain(urdf).fk([0.6]))
@@ -365,6 +365,88 @@ def test_move_ee_planning_that_does_not_finish_returns_false_holding(urdf, hangi
         assert arm.state is ArmState.ENABLED and arm.get_commanded_positions() == pytest.approx(before)
         assert arm._tick_count - ticks > 0.5 * took * arm.config.control_rate_hz   # the loop kept running
         assert arm.move_to(before, timeout=2.0)                                     # and the arm still takes targets
+    finally:
+        teardown(arm)
+
+
+@pytest.fixture
+def slow_planner(monkeypatch):
+    """move_ee's planning helper solves the path correctly, one second late."""
+    planner = sdk._planner
+    real_helper = planner._Helper
+    code = (f"from {sdk.__name__} import _planner as p\nimport time\nsolve = p.plan_ee\n"
+            "p.plan_ee = lambda *a, **k: (time.sleep(1.0), solve(*a, **k))[1]\np._serve()")
+    monkeypatch.setattr(planner, "_pool", planner._Pool())
+    monkeypatch.setattr(planner, "_Helper", lambda: real_helper(code))
+
+
+def move_ee_in_background(arm, goal, **kw):
+    result = {}
+
+    def run():
+        result["ok"] = arm.move_ee(goal, **kw)
+        result["at"] = time.monotonic()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread, result
+
+
+def test_a_newer_command_during_planning_owns_the_arm(urdf, slow_planner):
+    arm, _, _ = model_arm(urdf)
+    arm.enable()
+    try:
+        goal, _ = kinematics.pose_to_xyz_rpy(tool_chain(urdf).fk([0.8]))
+        thread, result = move_ee_in_background(arm, goal.tolist(), timeout=10.0)
+        time.sleep(0.3)
+        newer = [0.5] + arm.get_commanded_positions()[1:]
+        assert arm.move_to(newer, wait=False)
+        superseded = time.monotonic()
+        thread.join(5.0)
+        assert result["ok"] is False and result["at"] - superseded < 0.5
+        time.sleep(1.2)   # past the moment the plan would have been ready
+        with arm._target_lock:
+            assert arm._user_targets == pytest.approx(newer)
+    finally:
+        teardown(arm)
+
+
+def test_estop_and_enable_again_during_planning_sends_nothing_of_the_old_move(urdf, slow_planner):
+    arm, _, _ = model_arm(urdf)
+    arm.enable()
+    try:
+        goal, _ = kinematics.pose_to_xyz_rpy(tool_chain(urdf).fk([0.8]))
+        thread, result = move_ee_in_background(arm, goal.tolist(), timeout=10.0)
+        time.sleep(0.3)
+        arm.estop()
+        arm.enable()
+        held = arm.get_commanded_positions()
+        thread.join(5.0)
+        time.sleep(1.2)
+        assert result["ok"] is False
+        with arm._target_lock:
+            assert arm._user_targets == pytest.approx(held)
+    finally:
+        teardown(arm)
+
+
+def test_a_motion_superseded_after_planning_commits_no_row(urdf, monkeypatch):
+    # The last moment: the plan is ready, then a stop's hold takes over before the first row is committed.
+    arm, _, _ = model_arm(urdf)
+    arm.enable()
+    try:
+        goal, _ = kinematics.pose_to_xyz_rpy(tool_chain(urdf).fk([0.8]))
+        real_plan = sdk._planner.plan
+
+        def plan_then_hold(*a, **k):
+            k["cancel"] = None
+            result = real_plan(*a, **k)
+            arm.hold_current_position()
+            return result
+        monkeypatch.setattr(sdk._planner, "plan", plan_then_hold)
+        before = arm.get_commanded_positions()
+        assert arm.move_ee(goal.tolist(), timeout=5.0) is False
+        with arm._target_lock:
+            assert arm._user_targets == pytest.approx(before, abs=1e-3)
     finally:
         teardown(arm)
 

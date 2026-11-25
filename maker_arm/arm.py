@@ -53,6 +53,19 @@ def _finite(x: float) -> Optional[float]:
 ExtraTorque = Callable[[list[float], list[float]], Sequence[float]]
 
 
+class _MotionStop:
+    """``is_set()`` for move_ee's planning: the caller's cancel, or the motion superseded."""
+
+    def __init__(self, arm: "Arm", token: int, cancel: Optional[threading.Event]):
+        self.arm, self.token, self.cancel = arm, token, cancel
+
+    def superseded(self) -> bool:
+        return self.arm._motion != self.token
+
+    def is_set(self) -> bool:
+        return self.superseded() or (self.cancel is not None and self.cancel.is_set())
+
+
 class Arm:
     REPLY_TIMEOUT = 0.05   # s, per request
     REPLY_ATTEMPTS = 3
@@ -81,6 +94,9 @@ class Arm:
         self._speed: Optional[float] = None   # move_to() speed cap, cleared by the next target
         self._stuck_anchor: list[tuple[float, float]] = [(0.0, 0.0)] * n
         self._returning = False               # a return to rest owns the targets
+        # Motion ownership: bumped by every new target, stop, estop, disable, fault, return to rest and new
+        # session. A move_ee commits its rows only while the value it took is still current.
+        self._motion = 0
         self._released: set[int] = set()      # disabled after a fault (release_on_fault)
         self._faulted: set[int] = set()       # frozen at the fault pose
         self._watchdog_restore: dict[int, object] = {}
@@ -513,6 +529,7 @@ class Arm:
             self._synced = [False] * self.config.n_joints
             self._targets_received = False
             self._returning = False
+            self._motion += 1
             self._speed = speed
             self._stuck_anchor = [(p, now) for p in pos]
         self._hold = {i: GripperHold(j.hold_torque_nm, (j.lo, j.hi), j.closing_direction)
@@ -672,6 +689,7 @@ class Arm:
         with self._lifecycle:
             if self._state is ArmState.DISCONNECTED:
                 return
+            self._end_motion()
             self._stop_loop()
             self._release_all()
             self._released.clear()
@@ -683,6 +701,7 @@ class Arm:
     def estop(self) -> None:
         """Callable from any state and thread: torque off now (the arm will drop)."""
         log.warning("e-stop: releasing torque on all motors")
+        self._end_motion()
         with self._enable_gate:
             self._generation += 1
             self._running = False
@@ -895,12 +914,18 @@ class Arm:
             raise ValueError("speed must be positive")
         cfg = self.config
         ik = trajectory_ik.TrajectoryIK.from_config(cfg, chain=chain)
+        token = self._take_motion()
+        stopped = _MotionStop(self, token, cancel)
         current = self.get_commanded_positions()
         q0 = np.asarray(current[:chain.n], dtype=float)
         # Solved in a helper process (_planner.py): an in-process solve holds the interpreter lock the control loop
         # and the CAN receive thread need, and starved them on small computers.
         plan = _planner.plan(chain, ik, target, None if rpy is None else [float(v) for v in rpy], q0,
-                             cfg.control_rate_hz, speed, isolated=self.PLAN_IN_HELPER, limit=timeout, cancel=cancel)
+                             cfg.control_rate_hz, speed, isolated=self.PLAN_IN_HELPER, limit=timeout, cancel=stopped)
+        if stopped.superseded():
+            log.warning("move_ee dropped: a newer command, stop, e-stop, disable or fault took over while its path "
+                        "was planned; nothing was sent")
+            return False
         if plan.q is None:
             log.warning("move_ee rejected: %s; nothing was sent", plan.reason)
             return False
@@ -909,35 +934,31 @@ class Arm:
             return False
         deadline = None if timeout is None else time.monotonic() + timeout
         if not wait:
-            if not self._set_targets(rows[0], speed):
+            if not self._set_targets(rows[0], speed, token):
                 return False
-            threading.Thread(target=self._stream, args=(rows, speed, cancel, deadline), daemon=True,
+            threading.Thread(target=self._stream, args=(rows, speed, cancel, deadline, token), daemon=True,
                              name="move_ee").start()
             return True
-        if not self._stream(rows, speed, cancel, deadline):
+        if not self._stream(rows, speed, cancel, deadline, token):
             return False
         remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
-        return self.move_to(rows[-1], speed=speed, timeout=remaining, wait=True, cancel=cancel)
+        return self._move_to(rows[-1], speed, remaining, True, cancel, token)
 
     def _stream(self, rows: list[list[float]], speed: Optional[float], cancel: Optional[threading.Event],
-                deadline: Optional[float]) -> bool:
-        """Send ``rows`` as joint targets, one per control period. False when cancelled (holding the measured
-        pose), past ``deadline``, refused, or when newer targets take over."""
+                deadline: Optional[float], token: int) -> bool:
+        """Send ``rows`` as joint targets, one per control period, while motion ``token`` is current. False when
+        cancelled (holding the measured pose), past ``deadline``, refused, or when anything newer takes over."""
         period = 1.0 / self.config.control_rate_hz
         due = time.monotonic()
-        sent = None
         for row in rows:
             if cancel is not None and cancel.is_set():
-                self.hold_current_position()
+                if self._motion == token:
+                    self.hold_current_position()
                 return False
             if deadline is not None and time.monotonic() > deadline:
                 return False
-            with self._target_lock:
-                if sent is not None and self._user_targets != sent:
-                    return False
-            if not self._set_targets(row, speed):
+            if not self._set_targets(row, speed, token):
                 return False
-            sent = row
             due += period
             time.sleep(max(0.0, due - time.monotonic()))
         return True
@@ -946,7 +967,9 @@ class Arm:
     def set_joint_targets(self, targets: list[float]) -> bool:
         return self._set_targets(targets, None)
 
-    def _set_targets(self, targets: Sequence[float], speed: Optional[float]) -> bool:
+    def _set_targets(self, targets: Sequence[float], speed: Optional[float], token: Optional[int] = None) -> bool:
+        """Set the targets. Without ``token`` this is a new command and supersedes any motion in flight; with it,
+        the targets are taken only while that motion is still current."""
         if len(targets) != self.config.n_joints or not all(math.isfinite(t) for t in targets):
             log.warning("set_joint_targets rejected: need %d finite targets, got %s", self.config.n_joints, targets)
             return False
@@ -956,6 +979,10 @@ class Arm:
             if self._state is not ArmState.ENABLED or self._returning:
                 log.warning("set_joint_targets rejected: state=%s returning=%s", self._state.name, self._returning)
                 return False
+            if token is None:
+                self._motion += 1
+            elif token != self._motion:
+                return False   # superseded: something newer owns the targets
             if not self._targets_received:
                 # Startup sync is judged against the first real target, not the enable pose.
                 now = time.monotonic()
@@ -975,12 +1002,19 @@ class Arm:
         motion where it is (holding the measured pose) and returns False. Targets are refused
         unless ENABLED.
         """
+        return self._move_to(q, speed, timeout, wait, cancel, None)
+
+    def _move_to(self, q: Sequence[float], speed: Optional[float], timeout: Optional[float], wait: bool,
+                 cancel: Optional[threading.Event], token: Optional[int]) -> bool:
+        """move_to(); with ``token`` it continues that motion (taken only while it is current)."""
         q = [float(x) for x in q]
         if speed is not None and not (math.isfinite(speed) and speed > 0):
             raise ValueError("speed must be positive")
         if cancel is not None and cancel.is_set():
             return False
-        if not self._set_targets(q, speed):
+        if token is None:
+            token = self._take_motion()
+        if not self._set_targets(q, speed, token):
             return False
         if not wait:
             return True
@@ -996,10 +1030,11 @@ class Arm:
             if self._state is not ArmState.ENABLED or not self._running:
                 return False
             if cancel is not None and cancel.is_set():
-                self.hold_current_position()
+                if self._motion == token:
+                    self.hold_current_position()
                 return False
             with self._target_lock:
-                if self._user_targets != q:
+                if self._motion != token or self._user_targets != q:
                     return False
             pos = self.get_joint_positions()
             if all(math.isfinite(p) and abs(p - g) <= cfg.rest_arrived
@@ -1019,6 +1054,7 @@ class Arm:
             return False
         positions = self.get_joint_positions()
         with self._target_lock:
+            self._motion += 1
             for i, p in enumerate(positions):
                 if math.isfinite(p):
                     self._user_targets[i] = p
@@ -1051,6 +1087,7 @@ class Arm:
         positions = self.get_joint_positions()
         with self._target_lock:
             self._returning = True
+            self._motion += 1
             self._speed = None
             for i, p in enumerate(positions):
                 if math.isfinite(p):
@@ -1417,8 +1454,20 @@ class Arm:
             if reason:
                 self._enter_fault(f"{j.label}: {reason}", i)
 
+    def _end_motion(self) -> None:
+        """Invalidate any motion in flight (a move_ee being planned or streamed)."""
+        with self._target_lock:
+            self._motion += 1
+
+    def _take_motion(self) -> int:
+        """Start a new motion, superseding any in flight; returns its token."""
+        with self._target_lock:
+            self._motion += 1
+            return self._motion
+
     def _enter_fault(self, reason: str, index: Optional[int] = None) -> None:
         log.error("FAULT: %s", reason)
+        self._end_motion()
         self.fault_reasons.append(reason)
         if self.fault_reason is None:
             self.fault_reason = reason
