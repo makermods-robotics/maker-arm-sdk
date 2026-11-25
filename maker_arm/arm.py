@@ -869,7 +869,7 @@ class Arm:
         Works connected or disconnected (the bus is opened for the call). Refuses if ``new``
         already answers, or if it belongs to a joint of the profile (even one that is offline) unless ``replacing``
         names that joint and ``old`` is no joint's id: a motor replacing a joint, or one moved off its joint's id and
-        back. If afterwards both ids answer, the joint that had ``old`` is marked unverified and enable()/attach()
+        back. If afterwards both ids answer, the joints configured at ``old`` and ``new`` are marked unverified and enable()/attach()
         refuse this Arm (scan the bus, fix the profile, build a new Arm). The motor is
         read before the write and refused if it reports torque on, holds torque or moves; where its firmware
         cannot report torque state, ``torque_off_confirmed`` says the caller made sure it is de-energized
@@ -920,9 +920,10 @@ class Arm:
                 try:
                     target.set_id(new, timeout, torque_off_confirmed=torque_off_confirmed)
                 except RouteUnverified as e:
-                    index = next((i for i, j in enumerate(self.config.joints) if j.motor_id == old), None)
-                    if index is not None:
-                        self._unverified[index] = str(e)
+                    # Either id may now reach the wrong motor: the joints configured at both ends are unverified.
+                    for i, j in enumerate(self.config.joints):
+                        if j.motor_id in (old, new):
+                            self._unverified[i] = str(e)
                     raise
                 self._rekey(old, new, target)
             finally:

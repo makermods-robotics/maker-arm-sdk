@@ -371,3 +371,23 @@ def test_the_press_toward_the_support_is_bounded_by_effort_and_stays_inside_the_
     finally:
         arm.disable()
         arm.disconnect()
+
+
+def test_both_ids_answering_after_a_replacement_blocks_the_replaced_joint_too():
+    source, occupant = FakeMotor(9, position=0.3), FakeMotor(2, position=-0.5, online=False)
+    source.apply_id_change = False                               # the write is ignored ...
+    original = source.handle
+
+    def wake_occupant(can_id, data):                             # ... and the gripper's own motor answers after it
+        if bytes(data)[:6] == bytes([0xFF] * 6) and bytes(data)[7] == 0xFA:
+            occupant.online = True
+        return original(can_id, data)
+
+    source.handle = wake_occupant
+    arm, bus, _ = make_arm([FakeMotor(1, position=0.3), source, occupant])
+    with pytest.raises(StateError, match="both answer"):
+        arm.set_motor_id(9, 2, torque_off_confirmed=True, replacing="gripper")
+    arm.connect()
+    with pytest.raises(ConnectError, match="unverified"):
+        arm.enable()
+    arm.disconnect()
