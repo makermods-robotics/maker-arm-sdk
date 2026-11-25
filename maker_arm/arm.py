@@ -795,8 +795,13 @@ class Arm:
             return any(not math.isfinite(pos[i]) or abs(pos[i] - start[i]) > REST_SETTLE_MAX_MOTION for i in include)
 
         settled = False
+        scale, step = 1.0, 2.0 * period / REST_SETTLE_RAMP_S
         while True:
-            scale = 1.0 - min(1.0, max(0.0, time.monotonic() - began - REST_SETTLE_HOLD_S) / REST_SETTLE_RAMP_S)
+            # The ramp never outruns its checks: a late check lowers the gains by at most two steps.
+            scale = max(1.0 - min(1.0, max(0.0, time.monotonic() - began - REST_SETTLE_HOLD_S) / REST_SETTLE_RAMP_S),
+                        scale - step)
+            if scale < 1e-9:
+                scale = 0.0
             with self._target_lock:
                 if self._motion != token:
                     return False
