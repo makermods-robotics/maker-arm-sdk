@@ -17,6 +17,11 @@
   that really passed (up to four periods), so speed limits hold in real time.
 - Feedback and fault-status silence count from the oldest unanswered command or query, not from the last reply:
   a control loop that could not run for a while is no longer reported as a motor feedback timeout.
+- `url:` camera ids read a camera another program serves over HTTP: a multipart MJPEG stream or a single-JPEG
+  URL (`rig set-camera front url:http://127.0.0.1:8090/front/stream.mjpg`). A receive thread keeps only the
+  newest JPEG, frames are stamped when they arrive (less the server's `X-Frame-Age-Ms` when given), and a stream
+  that drops is reopened. `cameras list` shows the rig's `url:` cameras; `snapshot`, `stream` and
+  `Rig.camera()` take them like USB ones.
 
 ## 0.1.0
 
