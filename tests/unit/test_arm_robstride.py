@@ -97,6 +97,22 @@ def test_status_deadline_counts_from_the_first_unanswered_query():
     assert arm.state is ArmState.FAULT and "no fault-status reply" in arm.fault_reason
 
 
+def test_status_queries_that_fail_to_send_still_count_as_unanswered():
+    arm, _, _ = enabled_arm()
+
+    def broken(*a, **k):
+        raise OSError("send failed")
+    arm.motors[0].poll_status = broken
+    arm.motors[0]._status_time = time.monotonic() - 5.0    # its last status reply is old
+    arm._poll_sent = {1: 0.0, 2: 1e9}
+    arm._tick(0.005)                                       # the query to motor 1 fails to go out
+    assert arm.state is ArmState.ENABLED
+    deadline = 2 * arm.config.fault_poll_interval + arm.config.feedback_timeout
+    arm._awaiting_status[0] -= deadline + 0.1              # ... and nothing reached it since
+    arm._tick(0.005)
+    assert arm.state is ArmState.FAULT and "no fault-status reply" in arm.fault_reason
+
+
 def test_a_loop_that_could_not_poll_is_not_a_missing_status_reply():
     arm, _, fakes = enabled_arm()
     arm._poll_sent = {1: 0.0, 2: 1e9}

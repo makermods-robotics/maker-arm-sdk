@@ -1269,11 +1269,13 @@ class Arm:
                     gap = FRAME_SPACING_S - (time.perf_counter() - last_send)
                     if gap > 0:
                         self._busy_wait_us(gap * 1e6)
+                # A query that fails to go out counts as unanswered too: if none can be sent, the status deadline
+                # still runs out.
+                sent_at = time.monotonic()
+                self._awaiting_status[i] = self._still_awaiting(self._awaiting_status[i],
+                                                                self.motors[i].status_age, sent_at)
                 try:
-                    sent_at = time.monotonic()
                     self.motors[i].poll_status()
-                    self._awaiting_status[i] = self._still_awaiting(self._awaiting_status[i],
-                                                                    self.motors[i].status_age, sent_at)
                 except Exception as e:
                     log.error("fault query to motor %d failed: %s", self.motors[i].motor_id, e)
         self._tick_count += 1
