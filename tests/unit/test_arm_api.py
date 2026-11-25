@@ -259,14 +259,23 @@ def test_set_motor_id_validation():
 
 
 def test_set_motor_id_refuses_an_id_already_on_the_bus_and_cleans_up():
-    arm, bus, _ = make_arm()
+    stranger = FakeMotor(5, position=0.1)                   # on the bus, not in the profile
+    arm, bus, _ = make_arm([FakeMotor(1, position=0.3), FakeMotor(2, position=-0.5), stranger])
     with pytest.raises(ArmError, match="already answers"):
-        arm.set_motor_id(1, 2)
+        arm.set_motor_id(1, 5, torque_off_confirmed=True)
     assert not bus.is_open and arm.state is ArmState.DISCONNECTED
     arm.connect()
     with pytest.raises(ArmError, match="already answers"):
-        arm.set_motor_id(1, 2)
+        arm.set_motor_id(1, 5, torque_off_confirmed=True)
     assert bus.is_open and arm.refresh() == [True, True]   # the arm's receive path is back
+
+
+def test_set_motor_id_refuses_an_id_another_joint_has_before_opening_the_bus():
+    arm, bus, fakes = make_arm()
+    fakes[2].online = False                                 # even when that joint does not answer
+    with pytest.raises(ArmError, match="belongs to"):
+        arm.set_motor_id(1, 2, torque_off_confirmed=True)
+    assert not bus.is_open and bus.sent == []
 
 
 def test_gripper_opening_and_target_from_the_gripper_joint():
