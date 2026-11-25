@@ -158,11 +158,11 @@ def test_set_zero_persists_in_the_motor():
 def test_set_id_writes_the_id_and_verifies_the_motor_answers_there():
     fake = FakeMotor(7)
     motor, bus = wired(fake)
-    motor.set_id(8)
+    motor.set_id(8, torque_off_confirmed=True)
     assert fake.motor_id == 8 and motor.motor_id == 8 and ("set_id", 8) in fake.log
     assert (7, bytes([0xFF] * 6 + [8, 0xFA])) in [(i, bytes(d)) for i, d in bus.sent]
     assert bus.recv_callback == motor.handle_frame               # the tap is removed
-    motor.set_id(7)
+    motor.set_id(7, torque_off_confirmed=True)
     assert fake.motor_id == 7 and motor.motor_id == 7
 
 
@@ -171,7 +171,7 @@ def test_set_id_reports_a_motor_that_keeps_its_id():
     fake.apply_id_change = False
     motor, _ = wired(fake)
     with pytest.raises(StateError, match="still answers on ID 7"):
-        motor.set_id(8, timeout=0.02)
+        motor.set_id(8, timeout=0.02, torque_off_confirmed=True)
     assert motor.motor_id == 7
 
 
@@ -188,7 +188,7 @@ def test_set_id_reports_a_motor_that_stops_answering():
 
     fake.handle = then_silent
     with pytest.raises(StateError, match="neither ID 7 nor ID 8"):
-        motor.set_id(8, timeout=0.02)
+        motor.set_id(8, timeout=0.02, torque_off_confirmed=True)
 
 
 def test_set_id_refuses_bad_ids_a_fault_and_an_enabled_motor_without_writing():
@@ -200,12 +200,77 @@ def test_set_id_refuses_bad_ids_a_fault_and_an_enabled_motor_without_writing():
     motor.set_id(3)                                              # no-op
     fake.faulted = True
     with pytest.raises(StateError, match="fault"):
-        motor.set_id(9, timeout=0.02)
-    fake.faulted = False
+        motor.set_id(9, timeout=0.02, torque_off_confirmed=True)
+    motor.clear_fault()                                          # the operator clears it
     motor.enable_confirmed()
-    with pytest.raises(StateError, match="disable the motor"):
-        motor.set_id(9, timeout=0.02)
+    with pytest.raises(StateError, match="torque on"):
+        motor.set_id(9, timeout=0.02, torque_off_confirmed=True)
     assert not any(bytes(d)[7] == 0xFA for _, d in bus.sent) and fake.motor_id == 3
+
+
+def id_writes(bus):
+    return [i for i, d in bus.sent if bytes(d)[:6] == bytes([0xFF] * 6) and bytes(d)[7] == 0xFA]
+
+
+def test_set_id_refuses_a_fresh_motor_object_on_an_energized_motor():
+    # A Motor made for the call has no feedback of its own: set_id reads the motor first.
+    fake = FakeMotor(7, params_supported=True, enabled=True)
+    motor, bus = wired(fake)
+    with pytest.raises(StateError, match="torque on"):
+        motor.set_id(8, timeout=0.02, torque_off_confirmed=True)
+    assert id_writes(bus) == [] and fake.motor_id == 7
+
+
+def test_set_id_with_unknown_torque_state_needs_the_confirmation():
+    fake = FakeMotor(7)                       # old firmware: no mode bits
+    motor, bus = wired(fake)
+    with pytest.raises(StateError, match="torque_off_confirmed"):
+        motor.set_id(8, timeout=0.02)
+    assert id_writes(bus) == []
+    motor.set_id(8, timeout=0.02, torque_off_confirmed=True)
+    assert fake.motor_id == 8
+
+
+@pytest.mark.parametrize("reading", [{"torque": 0.2}, {"torque": -0.05}, {"velocity": 0.5}])
+def test_set_id_refuses_a_motor_holding_torque_or_moving(reading):
+    fake = FakeMotor(7)
+    for name, value in reading.items():
+        setattr(fake, name, value)
+    motor, bus = wired(fake)
+    with pytest.raises(StateError, match="energized|moving"):
+        motor.set_id(8, timeout=0.02, torque_off_confirmed=True)
+    assert id_writes(bus) == [] and fake.motor_id == 7
+
+
+def test_set_id_probes_the_destination_before_writing():
+    source, occupant = FakeMotor(7), FakeMotor(8)
+    bus = FakeBus([source, occupant])
+    motor = Motor(joint(7, "RS00", name="j"), bus)
+    bus.set_recv_callback(motor.handle_frame)
+    with pytest.raises(ArmError, match="already answers"):
+        motor.set_id(8, timeout=0.02, torque_off_confirmed=True)
+    assert id_writes(bus) == [] and source.motor_id == 7
+
+
+def test_set_id_needs_the_old_id_to_go_silent():
+    # The source ignores the write and a motor on the new id, silent during the probe, answers afterwards:
+    # the joint must not be rekeyed to that other motor.
+    source, occupant = FakeMotor(7), FakeMotor(8, online=False)
+    source.apply_id_change = False
+    original = source.handle
+
+    def wake_occupant(can_id, data):
+        if bytes(data)[:6] == bytes([0xFF] * 6) and bytes(data)[7] == 0xFA:
+            occupant.online = True
+        return original(can_id, data)
+
+    source.handle = wake_occupant
+    bus = FakeBus([source, occupant])
+    motor = Motor(joint(7, "RS00", name="j"), bus)
+    bus.set_recv_callback(motor.handle_frame)
+    with pytest.raises(StateError, match="ID 7 and ID 8 both answer"):
+        motor.set_id(8, timeout=0.02, torque_off_confirmed=True)
+    assert motor.motor_id == 7
 
 
 # ── connect-time validation and mode bits ──

@@ -7,7 +7,7 @@ import pytest
 
 from fakes import FakeMotor, classify, make_arm
 from maker_arm.arm import Arm, ArmState
-from maker_arm.errors import ConnectError
+from maker_arm.errors import ArmError, ConnectError, StateError
 from maker_arm.motor import Motor
 
 
@@ -163,10 +163,36 @@ def test_watchdog_readback_mismatch_refuses_enable_and_restores():
 
 def test_set_motor_id_changes_the_motor_and_routes_the_joint_to_it():
     arm, bus, motors = make_arm()
-    arm.set_motor_id(1, 9)
+    arm.set_motor_id(1, 9, torque_off_confirmed=True)
     assert motors[1].motor_id == 9 and not bus.is_open
     assert arm.config.joints[0].motor_id == 9
-    with pytest.raises(Exception, match="already answers"):
-        arm.set_motor_id(9, 2)
-    arm.set_motor_id(9, 1)
+    arm.set_motor_id(9, 1, torque_off_confirmed=True)
     assert motors[1].motor_id == 1 and arm.config.joints[0].motor_id == 1
+
+
+def id_writes(bus):
+    return [i for i, d in bus.sent if bytes(d)[:6] == bytes([0xFF] * 6) and bytes(d)[7] == 0xFA]
+
+
+def test_set_motor_id_refuses_an_id_another_joint_has_in_the_profile_even_when_it_is_offline():
+    arm, bus, motors = make_arm()
+    motors[2].online = False
+    with pytest.raises(ArmError, match="belongs to"):
+        arm.set_motor_id(1, 2, torque_off_confirmed=True)
+    assert id_writes(bus) == [] and motors[1].motor_id == 1
+
+
+def test_set_motor_id_reads_the_motor_before_writing():
+    # The public entry point builds a fresh Motor, which has no feedback until set_id reads it.
+    arm, bus, motors = make_arm([FakeMotor(1, position=0.3), FakeMotor(2, position=-0.5)])
+    with pytest.raises(StateError, match="torque_off_confirmed"):
+        arm.set_motor_id(1, 9)                                   # old firmware: torque state unknown
+    motors[1].torque = 0.3                                       # holding torque: energized
+    with pytest.raises(StateError, match="energized"):
+        arm.set_motor_id(1, 9, torque_off_confirmed=True)
+    motors[1].torque = 0.0
+    motors[1].params_supported = True
+    motors[1].enabled = True                                     # energized by another program
+    with pytest.raises(StateError, match="torque on"):
+        arm.set_motor_id(1, 9, torque_off_confirmed=True)
+    assert id_writes(bus) == [] and motors[1].motor_id == 1

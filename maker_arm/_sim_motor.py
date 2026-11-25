@@ -73,6 +73,8 @@ class SimMotor:
         self.run_mode = run_mode
         self.can_timeout = can_timeout
         self.host_id = host_id           # CAN id replies are sent to
+        self.torque = 0.0                # N*m and rad/s the motor reports (a held load, a hand moving it)
+        self.velocity = 0.0
         self.apply_id_change = True      # False: an id write is taken but the motor keeps its id
         self.uid = struct.pack("<Q", 0x5354524944450000 | motor_id)   # the MCU identifier an id write returns
         self.log: list = []
@@ -94,7 +96,8 @@ class SimMotor:
         return (2 if self.enabled else 0) if self.params_supported else 0
 
     def feedback(self):
-        return self.host_id, feedback_bytes(self.motor_id, self.position, temp=self.temperature,
+        return self.host_id, feedback_bytes(self.motor_id, self.position, vel=self.velocity, tau=self.torque,
+                                            temp=self.temperature,
                                             mode=self.mode, fault=self.fault_flag, warn=self.warning,
                                             params=self.params)
 

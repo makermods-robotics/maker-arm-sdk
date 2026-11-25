@@ -13,7 +13,7 @@ import logging
 import math
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, NamedTuple, Optional, Union
 
 from . import protocol
@@ -31,6 +31,10 @@ KP_RANGE = (protocol.KP_MIN, protocol.KP_MAX)
 KD_RANGE = (protocol.KD_MIN, protocol.KD_MAX)
 ID_RANGE = (1, 127)
 ID_SETTLE_S = 0.05      # after an id write, before the motor is asked on its new id
+# set_id refuses a motor whose fresh feedback shows more than this: it may be energized. A de-energized motor at rest
+# reads about 0.004 N*m and up to 0.08 rad/s (one torque step of the MIT frame is 0.007-0.008 N*m).
+SET_ID_MAX_TORQUE_NM = 0.03
+SET_ID_MAX_VELOCITY = 0.3   # rad/s
 DEFAULT_HOST_ID = protocol.HOST_CAN_ID
 
 
@@ -313,53 +317,80 @@ class Motor:
         """Make the current position the motor's zero. Persists in the motor."""
         self._send(protocol.encode_set_zero(self.motor_id))
 
-    def set_id(self, new_id: int, timeout: float = 0.5) -> None:
-        """Change the motor's CAN ID to new_id (MIT command 7: FF x6, new ID, FA).
+    def set_id(self, new_id: int, timeout: float = 0.5, torque_off_confirmed: bool = False) -> None:
+        """Change the motor's CAN ID to new_id (MIT command 7: FF x6, new ID, FA). Persistent.
 
-        Refused when the last feedback shows torque on, when the motor does not answer on its present
-        ID, or when it reports a fault. After the write the motor must answer the fault query on
-        new_id and no longer on the old one; a motor that still answers on the old ID took the
-        frame without applying it (StateError: power-cycle it and scan). The caller makes sure
-        nothing else answers on new_id (``Arm.set_motor_id`` does).
+        Before the write the motor is read afresh, whatever this object cached. Refused when it does not answer,
+        reports a fault, reports torque on, or (firmware that cannot report torque state) without
+        ``torque_off_confirmed`` from a caller who made sure it is de-energized; and in every case when its
+        feedback shows more than SET_ID_MAX_TORQUE_NM of torque or SET_ID_MAX_VELOCITY of motion. Refused when
+        anything answers on new_id. After the write the motor must answer on new_id and nothing on its old id; a
+        motor still answering on the old ID took the frame without applying it (StateError: power-cycle it and scan).
         """
         lo, hi = ID_RANGE
         if not lo <= new_id <= hi:
             raise ValueError(f"motor id must be in [{lo}, {hi}], got {new_id}")
         if new_id == self.motor_id:
             return
-        if self._feedback is not None and self._feedback.enabled:
-            raise StateError(f"{self.joint.label}: disable the motor before changing its id")
+        label, old_id = self.joint.label, self.motor_id
         step = min(timeout, 0.12)
-        status = self.check(step)
-        if status.has_fault:
-            raise StateError(f"{self.joint.label}: the motor reports a fault ({status.text}); clear it first")
-        old_id = self.motor_id
+        probe = Motor(replace(self.joint, motor_id=new_id), self._backend, self._host_id)
         backend, previous = self._backend, self._backend.recv_callback
 
-        def tap(can_id, data):          # replies from the new id are routed to another motor, or nowhere
+        def tap(can_id, data):          # replies on either id reach this motor and the probe, then the owner
             self.handle_frame(can_id, data)
+            probe.handle_frame(can_id, data)
             if previous is not None and previous != self.handle_frame:
                 previous(can_id, data)
 
         backend.set_recv_callback(tap)
         try:
+            status = self.check(step)
+            if status.has_fault:
+                raise StateError(f"{label}: the motor reports a fault ({status.text}); clear it first")
+            if self.params_supported is None:
+                self.probe_params(step, attempts=2)   # firmware with parameter access reports torque state
+            readings = [self.read_state(step)]
+            time.sleep(0.02)
+            readings.append(self.read_state(step))
+            if any(r.enabled for r in readings):
+                raise StateError(f"{label}: the motor reports torque on; disable it before changing its id")
+            if readings[-1].enabled is None and not torque_off_confirmed:
+                raise StateError(f"{label}: this firmware does not report whether torque is on. Make sure the motor "
+                                 "is de-energized, then confirm (torque_off_confirmed=True; the CLI asks)")
+            torque = max(abs(r.torque) for r in readings)
+            velocity = max(abs(r.velocity) for r in readings)
+            if torque > SET_ID_MAX_TORQUE_NM:
+                raise StateError(f"{label}: the motor reads {torque:.3f} N*m (a de-energized motor reads under "
+                                 f"{SET_ID_MAX_TORQUE_NM} N*m): it may be energized; not changing its id")
+            if velocity > SET_ID_MAX_VELOCITY:
+                raise StateError(f"{label}: the motor is moving ({velocity:.2f} rad/s); let it come to rest")
+            if self._answers(probe, step):
+                raise ArmError(f"motor ID {new_id} already answers on the bus")
             self._send(protocol.encode_set_id(old_id, new_id))
             time.sleep(ID_SETTLE_S)
-            self.motor_id = new_id
-            try:
-                self.check(step)
+            on_new, on_old = self._answers(probe, step), self._answers(self, step)
+            if on_new and not on_old:
+                self.motor_id = new_id
                 return
-            except ParamTimeout:
-                self.motor_id = old_id
-            try:
-                self.check(step)
-            except ParamTimeout:
-                raise StateError(f"{self.joint.label}: the motor answers on neither ID {old_id} nor ID {new_id} "
-                                 "after the id write; power-cycle it and scan") from None
-            raise StateError(f"{self.joint.label}: the motor still answers on ID {old_id}; if the change was "
-                             "taken it applies after a power cycle, so power-cycle it and scan")
+            if on_new:
+                raise StateError(f"{label}: ID {old_id} and ID {new_id} both answer after the id write: another "
+                                 "motor answers on one of them; the joint keeps its old id. Power-cycle and scan")
+            if on_old:
+                raise StateError(f"{label}: the motor still answers on ID {old_id}; if the change was taken it "
+                                 "applies after a power cycle, so power-cycle it and scan")
+            raise StateError(f"{label}: the motor answers on neither ID {old_id} nor ID {new_id} after the id "
+                             "write; power-cycle it and scan")
         finally:
             backend.set_recv_callback(previous)
+
+    @staticmethod
+    def _answers(motor: "Motor", timeout: float) -> bool:
+        try:
+            motor.check(timeout)
+            return True
+        except ParamTimeout:
+            return False
 
     def arm_watchdog(self, timeout_ms: int, timeout: float = 0.12) -> Optional[int]:
         """Set and verify the motor-side CAN timeout. Returns the previous value as the restore

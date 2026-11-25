@@ -747,11 +747,14 @@ class Arm:
                 self._wrap[i] = 0.0
                 time.sleep(0.01)
 
-    def set_motor_id(self, old: int, new: int, timeout: float = 0.5) -> None:
+    def set_motor_id(self, old: int, new: int, timeout: float = 0.5, torque_off_confirmed: bool = False) -> None:
         """Persistently change a motor's CAN ID from ``old`` to ``new`` while torque is off.
 
         Works connected or disconnected (the bus is opened for the call). Refuses if ``new``
-        already answers. A configured joint that had ``old`` is routed to ``new`` from then on
+        already answers or belongs to another joint of the profile (even one that is offline). The motor is
+        read before the write and refused if it reports torque on, holds torque or moves; where its firmware
+        cannot report torque state, ``torque_off_confirmed`` says the caller made sure it is de-energized
+        (Motor.set_id). A configured joint that had ``old`` is routed to ``new`` from then on
         (refresh() reads it again); update the profile file to keep the change.
         """
         lo, hi = ID_RANGE
@@ -763,6 +766,9 @@ class Arm:
         with self._lifecycle:
             if self._state not in (ArmState.DISCONNECTED, ArmState.CONNECTED):
                 raise StateError(f"set_motor_id() requires torque off, currently {self._state.name}")
+            other = next((j for j in self.config.joints if j.motor_id == new), None)
+            if other is not None:
+                raise ArmError(f"motor ID {new} belongs to {other.label} in the profile; pick a free id")
             joint = next((j for j in self.config.joints if j.motor_id == old), None) or JointConfig(
                 motor_id=old, lo=-math.pi, hi=math.pi, kp=0.0, kd=0.0)
             target = Motor(joint, self._backend, self.config.host_id)
@@ -787,7 +793,7 @@ class Arm:
                     taken = False
                 if taken:
                     raise ArmError(f"motor ID {new} already answers on the bus")
-                target.set_id(new, timeout)
+                target.set_id(new, timeout, torque_off_confirmed=torque_off_confirmed)
                 self._rekey(old, new, target)
             finally:
                 if opened:

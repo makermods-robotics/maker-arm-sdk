@@ -475,7 +475,7 @@ def test_move_ee_refused_unless_enabled(urdf):
 def test_set_motor_id_reroutes_the_joint(monkeypatch):
     arm, _, _ = make_arm()
     arm.config.required_motor_ids = [1, 2]
-    monkeypatch.setattr(sdk.motor.Motor, "set_id", lambda self, new_id, timeout=0.5: None)
+    monkeypatch.setattr(sdk.motor.Motor, "set_id", lambda self, new_id, timeout=0.5, **kw: None)
     arm.set_motor_id(1, 9)
     assert arm.config.joints[0].motor_id == 9 and arm.config.required_motor_ids == [9, 2]
     assert arm.motors[0].motor_id == 9 and set(arm._by_id) == {9, 2}
