@@ -263,3 +263,13 @@ def test_repo_gravity_float_version_matches_the_numpy_reference():
         g = rng.normal(size=3) * 5
         assert chain.gravity_torques(q, g) == pytest.approx(chain._gravity_torques_numpy(q, g), abs=1e-12)
         assert chain.gravity_torques(q) == pytest.approx(chain._gravity_torques_numpy(q), abs=1e-12)
+
+
+def test_float_gravity_follows_changes_to_the_chain():
+    chain = repo_chain()
+    q = np.radians([0.0, -15.0, 22.0, 0.0, 0.0, 0.0])
+    chain.gravity_torques(q)                                     # caches its float constants
+    chain.masses[3] *= 2.0                                       # in place
+    chain.mount = chain.mount @ np.diag([1.0, -1.0, -1.0, 1.0])  # replaced
+    chain.sign = -chain.sign
+    assert chain.gravity_torques(q) == pytest.approx(chain._gravity_torques_numpy(q), abs=1e-12)

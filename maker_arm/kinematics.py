@@ -345,9 +345,12 @@ class Chain:
         Cortex-A72). ``_gravity_torques_numpy`` is the reference it is tested against."""
         q = self._theta(q).tolist()
         gx, gy, gz = (float(v) for v in gravity)
-        consts = getattr(self, "_gravity_consts", None)
-        if consts is None:
-            consts = self._gravity_consts = self._float_constants()
+        # The constants are cached as floats, keyed on the inputs anyone may change (a few microseconds).
+        key = tuple(np.asarray(a, dtype=float).tobytes() for a in (self.mount, self.masses, self.sign, self._coms))
+        cached = getattr(self, "_gravity_consts", None)
+        if cached is None or cached[0] != key:
+            cached = self._gravity_consts = (key, self._float_constants())
+        consts = cached[1]
         mount_r, mount_p, fixed_r, fixed_p, axes, k1, k2, coms, masses, sign = consts
         rot, (px, py, pz) = mount_r, mount_p
         world_axes, pivots, moments = [], [], []
