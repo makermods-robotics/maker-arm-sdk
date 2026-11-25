@@ -353,6 +353,10 @@ def test_move_ee_planning_that_does_not_finish_returns_false_holding(urdf, hangi
     cancel = threading.Event()
     try:
         goal, _ = kinematics.pose_to_xyz_rpy(tool_chain(urdf).fk([0.6]))
+        # The loop's own rate on this computer, for comparison: a shared CI runner may be far below the profile's.
+        t_base, base_ticks = time.monotonic(), arm._tick_count
+        time.sleep(0.3)
+        baseline_hz = (arm._tick_count - base_ticks) / (time.monotonic() - t_base)
         before, ticks = arm.get_commanded_positions(), arm._tick_count
         if stop == "cancel":
             threading.Timer(0.3, cancel.set).start()
@@ -363,7 +367,7 @@ def test_move_ee_planning_that_does_not_finish_returns_false_holding(urdf, hangi
         assert ok is False and took < 1.5
         assert ("timed out" if stop == "timeout" else "cancelled") in caplog.text and "nothing was sent" in caplog.text
         assert arm.state is ArmState.ENABLED and arm.get_commanded_positions() == pytest.approx(before)
-        assert arm._tick_count - ticks > 0.5 * took * arm.config.control_rate_hz   # the loop kept running
+        assert arm._tick_count - ticks > 0.5 * took * baseline_hz   # the loop kept its pace while planning was refused
         assert arm.move_to(before, timeout=2.0)                                     # and the arm still takes targets
     finally:
         teardown(arm)

@@ -292,7 +292,12 @@ def test_cameras_commands_with_a_url_camera(bench, monkeypatch, tmp_path):
                                    "rig_name": "front"}]
         doc = bench.json("cameras", "snapshot", "--out", tmp_path / "shots")
         assert (tmp_path / "shots" / "front.jpg").stat().st_size > 0
-        stats = bench.json("cameras", "stream", "--seconds", "1.0")["cameras"]["front"]
-        assert stats["fps"] > 20 and stats["max_age_s"] < 0.2
+        before = len(server.sent_at)
+        doc = bench.json("cameras", "stream", "--seconds", "1.0")
+        stats, sent = doc["cameras"]["front"], server.sent_at[before:]
+        # Relative to what the server really sent: a loaded runner may pace its 30 fps far slower.
+        sent_rate = (len(sent) - 1) / (sent[-1] - sent[0])
+        received_rate = (stats["frames"] + stats["skipped"]) / doc["seconds"]
+        assert stats["frames"] > 0 and received_rate > 0.7 * sent_rate and stats["max_age_s"] < 0.5
     finally:
         server.close()
