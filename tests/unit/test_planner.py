@@ -1,9 +1,12 @@
 """move_ee's path planning in a helper process: same plan as in this process, refusals and errors carried back,
-a fallback when no helper can run, and the caller's main module never imported by the helper."""
+a fallback only when no helper can run, planning bounded by time and cancel, and the caller's main module never
+imported by the helper."""
 
 import math
 import subprocess
 import sys
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -55,7 +58,97 @@ def test_falls_back_to_this_process_when_no_helper_starts(setup, monkeypatch, ca
     with caplog.at_level("WARNING"):
         result = planner.plan(chain, ik, (start + [0, 0, 0.01]).tolist(), None, q0, 50.0, None)
     assert result.q is not None
-    assert pool.unavailable and "helper failed" in caplog.text
+    assert pool.unavailable and "could not be started" in caplog.text
+
+
+# ── bounded planning: helpers that hang, die or are too slow ──
+HANG = "import sys, time; sys.stdin.buffer.read(1); time.sleep(60)"
+EXIT_AT_ONCE = "import sys; sys.exit(3)"
+
+
+def patched_serve(patch: str) -> str:
+    """Helper code that runs ``patch`` (with ``p`` = the helper's _planner module) before serving."""
+    return f"from {sdk.__name__} import _planner as p\n{patch}\np._serve()"
+
+
+DIE_WHILE_SOLVING = patched_serve(
+    "import os\np.trajectory_ik.solve_path = lambda *a, **k: os._exit(3)")
+SLOW_SOLVE = patched_serve(
+    "import time\nsolve = p.trajectory_ik.solve_path\n"
+    "p.trajectory_ik.solve_path = lambda *a, **k: (time.sleep(30), solve(*a, **k))[1]")
+
+
+@pytest.fixture
+def helper_code(monkeypatch):
+    """Use a fresh pool whose helpers run the code given to the returned setter; plan_ee in this process fails."""
+    pool = planner._Pool()
+    monkeypatch.setattr(planner, "_pool", pool)
+    real_helper = planner._Helper
+
+    def use(code):
+        monkeypatch.setattr(planner, "_Helper", lambda: real_helper(code))
+
+    def no_local_solve(*a, **k):
+        raise AssertionError("the plan was solved in this process")
+    monkeypatch.setattr(planner, "plan_ee", no_local_solve)
+    use.pool = pool
+    return use
+
+
+def timed_plan(setup, **kw):
+    chain, ik, q0, start = setup
+    t0 = time.monotonic()
+    result = planner.plan(chain, ik, (start + [0, 0, 0.01]).tolist(), None, q0, 50.0, None, **kw)
+    return result, time.monotonic() - t0
+
+
+def test_a_hanging_helper_is_stopped_after_the_callers_limit(setup, helper_code):
+    helper_code(HANG)
+    result, took = timed_plan(setup, limit=0.4)
+    assert result.q is None and "timed out after 0.4 s" in result.reason
+    assert 0.35 < took < 1.5
+    assert helper_code.pool._idle == [] and helper_code.pool.unavailable is None
+
+
+def test_a_hanging_helper_is_stopped_after_its_start_allowance(setup, helper_code, monkeypatch):
+    helper_code(HANG)
+    monkeypatch.setattr(planner, "PLAN_START_S", 0.4)
+    result, took = timed_plan(setup)
+    assert result.q is None and "timed out" in result.reason and took < 1.5
+
+
+def test_a_helper_slower_than_its_allowance_per_tick_is_stopped(setup, helper_code, monkeypatch):
+    helper_code(SLOW_SOLVE)
+    monkeypatch.setattr(planner, "PLAN_MARGIN_S", 0.3)
+    monkeypatch.setattr(planner, "PLAN_S_PER_TICK", 0.001)
+    result, took = timed_plan(setup)
+    assert result.q is None and "timed out" in result.reason
+    assert took < planner.PLAN_START_S + 1.0
+
+
+def test_cancel_stops_planning_at_once(setup, helper_code):
+    helper_code(HANG)
+    cancel = threading.Event()
+    threading.Timer(0.3, cancel.set).start()
+    result, took = timed_plan(setup, cancel=cancel)
+    assert result.q is None and "cancelled" in result.reason and took < 1.0
+
+
+def test_a_helper_that_dies_while_solving_fails_the_plan_without_solving_it_here(setup, helper_code, caplog):
+    helper_code(DIE_WHILE_SOLVING)
+    with caplog.at_level("WARNING"):
+        result, took = timed_plan(setup, limit=30.0)
+    assert result.q is None and "planning helper failed" in result.reason and took < 10.0
+    assert helper_code.pool.unavailable is None   # the next call starts a new helper
+
+
+def test_a_helper_that_never_starts_is_replaced_by_solving_here(setup, monkeypatch):
+    pool = planner._Pool()
+    monkeypatch.setattr(planner, "_pool", pool)
+    real_helper = planner._Helper
+    monkeypatch.setattr(planner, "_Helper", lambda: real_helper(EXIT_AT_ONCE))
+    result, _ = timed_plan(setup, limit=30.0)
+    assert result.q is not None and pool.unavailable
 
 
 def test_helper_never_imports_the_callers_main_module(tmp_path):

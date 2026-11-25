@@ -876,11 +876,13 @@ class Arm:
         of seconds) in a helper process, so the solve never holds up the control loop (the first call starts the
         helper, about a second), and streamed through the joint targets, so no tick moves
         a joint further than its speed allows and a small tool move stays a small joint move. Joints past the
-        chain (the gripper) keep their command. Refused (False, nothing sent) when not ENABLED or when the end
-        pose is out of reach within the soft limits. With ``wait`` it blocks until arrival as move_to() does
-        (False on timeout, a fault or newer targets taking over); without it the path streams in the background.
-        Setting ``cancel`` stops the motion where it is (holding the measured pose) and returns False.
-        ArmError without a URDF.
+        chain (the gripper) keep their command. Refused (False, nothing sent, the arm keeps holding its commanded
+        pose) when not ENABLED, when the end pose is out of reach within the soft limits, or when planning does not
+        finish: it is stopped after ``timeout`` seconds, when ``cancel`` is set, or past its own limit of a few
+        seconds beyond the expected solve (_planner.py). With ``wait`` it then blocks until arrival as move_to()
+        does (False after ``timeout`` seconds counted from the end of planning, on a fault or when newer targets
+        take over); without it the path streams in the background. Setting ``cancel`` stops the motion where it
+        is (holding the measured pose) and returns False. ArmError without a URDF.
         """
         chain = self.chain
         if self._state is not ArmState.ENABLED:
@@ -898,9 +900,9 @@ class Arm:
         # Solved in a helper process (_planner.py): an in-process solve holds the interpreter lock the control loop
         # and the CAN receive thread need, and starved them on small computers.
         plan = _planner.plan(chain, ik, target, None if rpy is None else [float(v) for v in rpy], q0,
-                             cfg.control_rate_hz, speed, isolated=self.PLAN_IN_HELPER)
+                             cfg.control_rate_hz, speed, isolated=self.PLAN_IN_HELPER, limit=timeout, cancel=cancel)
         if plan.q is None:
-            log.warning("move_ee rejected: %s", plan.reason)
+            log.warning("move_ee rejected: %s; nothing was sent", plan.reason)
             return False
         rows = [q.tolist() + current[chain.n:] for q in plan.q]
         if cancel is not None and cancel.is_set():

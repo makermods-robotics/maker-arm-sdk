@@ -336,6 +336,39 @@ def test_move_ee_cancel_stops_and_holds(urdf):
         teardown(arm)
 
 
+@pytest.fixture
+def hanging_planner(monkeypatch):
+    """move_ee's planning helper takes the request and never answers."""
+    planner = sdk._planner
+    real_helper = planner._Helper
+    monkeypatch.setattr(planner, "_pool", planner._Pool())
+    monkeypatch.setattr(planner, "_Helper",
+                        lambda: real_helper("import sys, time; sys.stdin.buffer.read(1); time.sleep(60)"))
+
+
+@pytest.mark.parametrize("stop", ["timeout", "cancel"])
+def test_move_ee_planning_that_does_not_finish_returns_false_holding(urdf, hanging_planner, caplog, stop):
+    arm, _, _ = model_arm(urdf)
+    arm.enable()
+    cancel = threading.Event()
+    try:
+        goal, _ = kinematics.pose_to_xyz_rpy(tool_chain(urdf).fk([0.6]))
+        before, ticks = arm.get_commanded_positions(), arm._tick_count
+        if stop == "cancel":
+            threading.Timer(0.3, cancel.set).start()
+        t0 = time.monotonic()
+        with caplog.at_level("WARNING"):
+            ok = arm.move_ee(goal.tolist(), timeout=0.3 if stop == "timeout" else 30.0, cancel=cancel)
+        took = time.monotonic() - t0
+        assert ok is False and took < 1.5
+        assert ("timed out" if stop == "timeout" else "cancelled") in caplog.text and "nothing was sent" in caplog.text
+        assert arm.state is ArmState.ENABLED and arm.get_commanded_positions() == pytest.approx(before)
+        assert arm._tick_count - ticks > 0.5 * took * arm.config.control_rate_hz   # the loop kept running
+        assert arm.move_to(before, timeout=2.0)                                     # and the arm still takes targets
+    finally:
+        teardown(arm)
+
+
 def test_move_ee_without_wait_streams_in_the_background(urdf):
     arm, _, _ = model_arm(urdf)
     arm.enable()

@@ -6,7 +6,11 @@
   about 147 Hz at rest and fell to 20 Hz while `move_ee` solved its path, until the arm faulted on stale feedback;
   now about 192 Hz at rest and 199 Hz during `move_ee` planning.
   - `move_ee` solves its path in a helper process (`_planner.py`), so the solve no longer holds the interpreter
-    lock the control loop and the CAN receive thread need. Falls back to solving in-process if no helper starts.
+    lock the control loop and the CAN receive thread need. Solves in-process only when no helper can run at all.
+  - Planning is bounded: `move_ee`'s `timeout` and `cancel` apply while the path is planned, and the helper gets
+    5 s to start and solve the end pose, then 3 s plus 25 ms per path tick. A helper that runs out of time, is
+    cancelled or dies is killed and `move_ee` returns False with nothing sent; the request is not solved again
+    in-process.
   - The control loop and the receive threads run on the fastest cores of a big.LITTLE CPU, and while a loop runs
     the GIL switch interval is 0.5 ms instead of 5 ms (`realtime.py`; `ARM_SDK_THREAD_TUNING=off` leaves both
     alone). Computers whose cores are all alike are not pinned.
@@ -22,6 +26,11 @@
   newest JPEG, frames are stamped when they arrive (less the server's `X-Frame-Age-Ms` when given), and a stream
   that drops is reopened. `cameras list` shows the rig's `url:` cameras; `snapshot`, `stream` and
   `Rig.camera()` take them like USB ones.
+- `set-id` (`Arm.set_motor_id`) changes a RobStride motor's CAN ID with MIT command 7, with torque off. Refused
+  with a fault or when the new ID already answers; afterwards the motor must answer on the new ID and no longer
+  on the old one.
+- `gravity --check` gives the gravity model the chain's joints only, so it compares the measured holding torque
+  with the model on an arm with a gripper.
 
 ## 0.1.0
 

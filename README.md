@@ -145,7 +145,9 @@ The loop is a Python thread, so heavy Python work in your own threads (a policy,
 shares the interpreter lock with them. `arm.loop_rate_hz` is the measured rate; below 90 % of the profile's the
 SDK warns once, and each tick still moves by the time that really passed, so speed limits hold. On a big.LITTLE
 board the loop and the CAN receive thread move to the fast cores by themselves, and `move_ee` solves its path in a
-helper process. Set `ARM_SDK_THREAD_TUNING=off` to leave thread placement and the GIL switch interval alone.
+helper process. Planning is bounded: when the helper has not finished a few seconds after its expected solve time,
+when `timeout` runs out or when `cancel` is set, `move_ee` returns False at once, nothing sent and the arm holding
+its pose. Set `ARM_SDK_THREAD_TUNING=off` to leave thread placement and the GIL switch interval alone.
 
 ### Your own teleoperation loop
 

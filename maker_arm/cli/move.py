@@ -145,7 +145,7 @@ def main() -> None:
     ap.add_argument("--rpy", type=float, nargs=3, metavar=("R", "P", "Y"), help="tool orientation, degrees")
     ap.add_argument("--dxyz", type=float, nargs=3, metavar=("DX", "DY", "DZ"), help="relative tool move, metres")
     ap.add_argument("--speed", type=float, metavar="DEG_S", help="per-joint speed cap, deg/s, for joint and Cartesian moves (default: the profile's)")
-    ap.add_argument("--timeout", type=float, metavar="S", help="give up on arrival after S seconds")
+    ap.add_argument("--timeout", type=float, metavar="S", help="give up on arrival after S seconds (--xyz/--dxyz: also on planning the path)")
     add_then_arg(ap, "hold", choices=("hold", "rest", "stay"))
     add_for_arg(ap)
     add_gravity_arg(ap)
