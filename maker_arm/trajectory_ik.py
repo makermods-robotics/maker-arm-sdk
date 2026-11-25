@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, fields, replace
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import numpy as np
 
@@ -559,9 +559,15 @@ def seam_blend(q: np.ndarray, q_from, ticks: int, lo, hi, max_step) -> np.ndarra
 
 
 def solve_path(ik: TrajectoryIK, poses: Sequence[np.ndarray], q_last, rate_hz: float,
-               speed_cap: Optional[float] = None, chunk: int = 64) -> IKResult:
-    """A long pose path (T, 4, 4) solved in chunks of ``chunk`` ticks, each continuing the one before."""
+               speed_cap: Optional[float] = None, chunk: int = 64,
+               between: Optional[Callable[[], None]] = None) -> IKResult:
+    """A long pose path (T, 4, 4) solved in chunks of ``chunk`` ticks, each continuing the one before. ``between``
+    is called before each chunk; it may raise to stop the solve."""
     poses = np.asarray(poses, dtype=float)
     stream = IKStream(ik, q_last, rate_hz, speed_cap)
-    parts = [stream.feed(poses[i:i + chunk]) for i in range(0, len(poses), chunk)]
+    parts = []
+    for i in range(0, len(poses), chunk):
+        if between is not None:
+            between()
+        parts.append(stream.feed(poses[i:i + chunk]))
     return IKResult(*(np.concatenate([getattr(p, f.name) for p in parts]) for f in fields(IKResult)))

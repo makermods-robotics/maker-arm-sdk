@@ -9,12 +9,13 @@ threads never wait on it.
 The helper is started with ``python -c "from <package> import _planner; _planner._serve()"``: it never imports the
 caller's main module, so a script without an ``if __name__ == "__main__"`` guard is safe.
 
-Planning is bounded. A helper has ``PLAN_START_S`` to start and solve the end pose; it then reports how many ticks the
-path has, and gets ``PLAN_MARGIN_S`` plus ``PLAN_S_PER_TICK`` per tick to solve it (again for each slower retiming).
-The caller's ``limit`` and ``cancel`` apply on top. A helper that runs out of time, is cancelled or dies is killed and
-the plan is refused (``EEPlan.q`` None, with the reason): the same request is never solved again in this process,
-where it would hold the interpreter lock for as long as it takes. Only when no helper can run at all (no subprocess
-support, a frozen application whose interpreter cannot run ``-c``) is the plan solved in this process, with a warning.
+Planning is bounded. A path longer than ``MAX_PATH_TICKS`` is refused before it is built. A helper has
+``PLAN_START_S`` to start and solve the end pose; it then reports how many ticks the path has, and gets
+``PLAN_MARGIN_S`` plus ``PLAN_S_PER_TICK`` per tick to solve it (again for each slower retiming), never more than
+``PLAN_CEILING_S`` in all. The caller's ``limit`` and ``cancel`` apply on top. A helper that runs out of time, is
+cancelled, dies or cannot be talked to is killed and the plan is refused (``EEPlan.q`` None, with the reason); the
+next plan starts a fresh helper. Only when no helper process can be created at all (no subprocess support) is the
+plan solved in this process, under the same limits, checked between chunks of the path.
 """
 
 from __future__ import annotations
@@ -47,8 +48,41 @@ EE_MIN_SECONDS = 0.25   # shortest path
 PLAN_START_S = 5.0       # a helper must start (about 2 s on a Cortex-A53) and solve the end pose within this
 PLAN_S_PER_TICK = 0.025  # path solve time allowed per tick (about 8 ms on a Cortex-A72, 21 ms on a Cortex-A53)
 PLAN_MARGIN_S = 3.0      # added to the per-tick allowance
+PLAN_CEILING_S = 60.0    # the most any one plan may take, all retimings included
+MAX_PATH_TICKS = 12000   # the longest path planned (60 s at 200 Hz); longer moves are refused: split them
 _POLL_S = 0.05           # how often a waiting caller looks at its cancel event
 _HEADER = struct.Struct("<I")
+
+
+class PlanStopped(Exception):
+    """Planning ran out of time or was cancelled."""
+
+
+class _Budget:
+    """The time one plan may take: PLAN_START_S until the path length is known, then PLAN_MARGIN_S plus
+    PLAN_S_PER_TICK per tick, never past PLAN_CEILING_S or the caller's ``limit``; ``cancel`` (anything with
+    ``is_set()``) stops it at once."""
+
+    def __init__(self, limit: Optional[float] = None, cancel=None):
+        self.started = time.monotonic()
+        self.cancel = cancel
+        self.ceiling = self.started + PLAN_CEILING_S
+        self.caller = None if limit is None else self.started + limit
+        self.allowed = self.started + PLAN_START_S
+
+    def ticks(self, n: int) -> None:
+        self.allowed = time.monotonic() + PLAN_MARGIN_S + n * PLAN_S_PER_TICK
+
+    def end(self) -> float:
+        return min(t for t in (self.allowed, self.ceiling, self.caller) if t is not None)
+
+    def check(self) -> None:
+        """PlanStopped when cancelled or out of time."""
+        now = time.monotonic()
+        if self.cancel is not None and self.cancel.is_set():
+            raise PlanStopped(f"path planning cancelled after {now - self.started:.2f} s")
+        if now >= self.end():
+            raise PlanStopped(f"path planning timed out after {now - self.started:.2f} s")
 
 
 @dataclass
@@ -59,9 +93,11 @@ class EEPlan:
 
 def plan_ee(chain: kinematics.Chain, ik: trajectory_ik.TrajectoryIK, target: Sequence[float],
             rpy: Optional[Sequence[float]], q0: np.ndarray, rate: float, speed: Optional[float],
-            progress: Optional[Callable[[int], None]] = None) -> EEPlan:
+            progress: Optional[Callable[[int], None]] = None,
+            check: Optional[Callable[[], None]] = None) -> EEPlan:
     """The straight-line tool path from the chain pose ``q0`` to ``target`` (and ``rpy``), solved per control tick.
-    ``progress`` is called with the number of ticks before each solve of the path."""
+    ``progress`` is called with the number of ticks before each solve of the path, ``check`` between its chunks
+    (it may raise to stop the solve). Paths longer than MAX_PATH_TICKS are refused before they are built."""
     target = [float(v) for v in target]
     rpy = None if rpy is None else [float(v) for v in rpy]
     q0 = np.asarray(q0, dtype=float)
@@ -80,11 +116,14 @@ def plan_ee(chain: kinematics.Chain, ik: trajectory_ik.TrajectoryIK, target: Seq
     for _ in range(4):
         # the goal held a while at the end lets the smoothed solve settle onto it
         hold = max(int(math.ceil(EE_MIN_SECONDS * rate / 2)), ticks // 5)
+        if ticks + hold > MAX_PATH_TICKS:
+            return EEPlan(None, f"the path needs {(ticks + hold) / rate:.0f} s at this speed, longer than the "
+                                f"{MAX_PATH_TICKS / rate:.0f} s planned at most: split the move or raise the speed")
         poses = trajectory_ik.straight_line(start, goal, ticks)
         poses = np.concatenate([poses, np.repeat(goal[None], hold, axis=0)])
         if progress is not None:
             progress(len(poses))
-        plan = trajectory_ik.solve_path(ik, poses, q0, rate, speed)
+        plan = trajectory_ik.solve_path(ik, poses, q0, rate, speed, between=check)
         if not plan.capped.any():
             break
         ticks = int(math.ceil(ticks * 1.5))
@@ -112,10 +151,6 @@ def _receive(stream):
     return pickle.loads(data)
 
 
-class PlanStopped(Exception):
-    """The helper ran out of time or the caller cancelled; the helper was killed."""
-
-
 class _Helper:
     """One helper process; one request at a time."""
 
@@ -128,7 +163,6 @@ class _Helper:
         code = code or f"from {__package__} import _planner; _planner._serve()"
         self.proc = subprocess.Popen([sys.executable, "-c", code],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, close_fds=True)
-        self.worked = False   # it has sent something: it did start
 
     def _exchange(self, request, out: queue.Queue) -> None:
         # Runs in its own thread, so the caller can stop waiting at any time; killing the helper ends it.
@@ -142,30 +176,21 @@ class _Helper:
         except Exception as e:  # noqa: BLE001 - handed to the caller
             out.put(("closed", e))
 
-    def call(self, request, limit: Optional[float] = None, cancel: Optional[threading.Event] = None):
-        """The helper's final reply, ("ok", plan) or ("error", exception). PlanStopped past its time, past
-        ``limit`` seconds or when ``cancel`` is set; the exception that broke the pipe if it failed."""
-        started = time.monotonic()
-        allowed = started + PLAN_START_S
-        caller_end = None if limit is None else started + limit
+    def call(self, request, budget: _Budget):
+        """The helper's final reply, ("ok", plan) or ("error", exception). PlanStopped when ``budget`` runs out or
+        is cancelled; the exception that broke the pipe if it failed."""
         messages: queue.Queue = queue.Queue()
         threading.Thread(target=self._exchange, args=(request, messages), daemon=True, name="move_ee planner").start()
         while True:
-            end = allowed if caller_end is None else min(allowed, caller_end)
-            now = time.monotonic()
-            if cancel is not None and cancel.is_set():
-                raise PlanStopped(f"path planning cancelled after {now - started:.1f} s")
-            if now >= end:
-                raise PlanStopped(f"path planning timed out after {now - started:.1f} s")
+            budget.check()
             try:
-                kind, value = messages.get(timeout=min(end - now, _POLL_S) if cancel is not None else end - now)
+                kind, value = messages.get(timeout=max(0.0, min(budget.end() - time.monotonic(), _POLL_S)))
             except queue.Empty:
                 continue
             if kind == "closed":
                 raise value
-            self.worked = True
             if kind == "ticks":
-                allowed = time.monotonic() + PLAN_MARGIN_S + value * PLAN_S_PER_TICK
+                budget.ticks(value)
                 continue
             return kind, value
 
@@ -191,39 +216,43 @@ class _Pool:
     def __init__(self):
         self._lock = threading.Lock()
         self._idle: list[_Helper] = []
-        self.unavailable: Optional[str] = None   # why helpers are not used in this process
+        self.unavailable: Optional[str] = None   # why no helper process can be created here
 
-    def plan(self, args, limit: Optional[float] = None, cancel: Optional[threading.Event] = None) -> EEPlan:
+    def plan(self, args, limit: Optional[float] = None, cancel=None) -> EEPlan:
+        budget = _Budget(limit, cancel)
         if self.unavailable is None:
             with self._lock:
                 helper = self._idle.pop() if self._idle else None
-            try:
-                if helper is None:
+            if helper is None:
+                try:
                     helper = _Helper()
-                status, value = helper.call(args, limit, cancel)
-            except BaseException as e:
-                # Interrupted, stopped or broken mid-request: its reply could still arrive, so it is never reused.
-                if helper is not None:
-                    helper.kill()
-                if isinstance(e, PlanStopped):
-                    return EEPlan(None, str(e))
-                if not isinstance(e, (OSError, EOFError, pickle.PickleError, ValueError, TypeError, AttributeError)):
-                    raise
-                reason = str(e) or type(e).__name__
-                if helper is not None and helper.worked:
-                    log.warning("move_ee planning helper failed (%s)", reason)
-                    return EEPlan(None, f"the planning helper failed ({reason})")
-                self.unavailable = reason   # no helper can run here: stop trying
-                log.warning("move_ee planning helper could not be started (%s); solving paths in this process", reason)
-            else:
-                with self._lock:
-                    self._idle.append(helper)
-                if status == "error":
-                    raise value   # the solve itself raised, as it would have in this process
-                return value
-        if cancel is not None and cancel.is_set():
-            return EEPlan(None, "path planning cancelled")
-        return plan_ee(*args)
+                except (OSError, ValueError, NotImplementedError) as e:
+                    # No process can be created on this platform: solve here, under the same limits.
+                    self.unavailable = str(e) or type(e).__name__
+                    log.warning("move_ee planning helper could not be started (%s); solving paths in this process",
+                                self.unavailable)
+            if helper is not None:
+                return self._plan_in(helper, args, budget)
+        return _plan_here(args, budget)
+
+    def _plan_in(self, helper: _Helper, args, budget: _Budget) -> EEPlan:
+        try:
+            status, value = helper.call(args, budget)
+        except BaseException as e:
+            # Stopped, interrupted or broken mid-request: its reply could still arrive, so it is never reused.
+            helper.kill()
+            if isinstance(e, PlanStopped):
+                return EEPlan(None, str(e))
+            if not isinstance(e, Exception):
+                raise
+            reason = str(e) or type(e).__name__
+            log.warning("move_ee planning helper failed (%s)", reason)
+            return EEPlan(None, f"the planning helper failed ({reason})")
+        with self._lock:
+            self._idle.append(helper)
+        if status == "error":
+            raise value   # the solve itself raised, as it would have in this process
+        return value
 
     def close(self) -> None:
         with self._lock:
@@ -236,12 +265,22 @@ _pool = _Pool()
 atexit.register(_pool.close)
 
 
+def _plan_here(args, budget: _Budget) -> EEPlan:
+    """``plan_ee`` in this process, stopped between chunks of the path when ``budget`` runs out or is cancelled."""
+    try:
+        budget.check()
+        return plan_ee(*args, progress=budget.ticks, check=budget.check)
+    except PlanStopped as e:
+        return EEPlan(None, str(e))
+
+
 def plan(chain, ik, target, rpy, q0, rate: float, speed: Optional[float], isolated: bool = True,
-         limit: Optional[float] = None, cancel: Optional[threading.Event] = None) -> EEPlan:
-    """``plan_ee`` in a helper process (``isolated``), or in this one. In a helper the plan is refused (q None)
-    after ``limit`` seconds, when ``cancel`` is set, or when the helper runs past its own allowance or dies."""
+         limit: Optional[float] = None, cancel=None) -> EEPlan:
+    """``plan_ee`` in a helper process (``isolated``), or in this one; either way the plan is refused (q None)
+    after ``limit`` seconds, when ``cancel`` (anything with ``is_set()``) is set, past the planning allowance
+    (module docstring), or when the helper fails."""
     args = (chain, ik, target, rpy, q0, rate, speed)
-    return _pool.plan(args, limit, cancel) if isolated else plan_ee(*args)
+    return _pool.plan(args, limit, cancel) if isolated else _plan_here(args, _Budget(limit, cancel))
 
 
 def _serve() -> None:
