@@ -1395,9 +1395,10 @@ class Arm:
         next_t = last = time.perf_counter()
         while self._may_send(session):
             # Commands advance by the time that really passed since the previous tick (at most a few periods), so
-            # a computer that cannot keep the profile's rate still moves the arm at the commanded speed.
+            # a computer that cannot keep the profile's rate still moves the arm at the commanded speed, and the
+            # early tick that follows a late one is credited only its shorter interval.
             started = time.perf_counter()
-            elapsed = min(max(dt, started - last), MAX_TICK_PERIODS * dt)
+            elapsed = min(max(0.0, started - last), MAX_TICK_PERIODS * dt)
             last = started
             try:
                 self._tick(elapsed, session)

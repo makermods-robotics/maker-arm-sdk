@@ -120,15 +120,16 @@ def simulated_arm(config: ConfigLike = None, positions: Optional[Sequence[float]
 
 
 def _follow_the_clock(arm: Arm) -> None:
-    """Each control tick of ``arm`` advances its commands by the time since the previous tick, between
-    one and SIM_MAX_TICK_PERIODS periods."""
+    """Each control tick of ``arm`` advances its commands by the time since the previous tick, at most
+    SIM_MAX_TICK_PERIODS periods."""
     tick, last = arm._tick, [None]
+    period = 1.0 / arm.config.control_rate_hz
 
     def timed(dt, session=None):
         now = time.monotonic()
         elapsed = dt if last[0] is None else now - last[0]
         last[0] = now
-        tick(min(max(dt, elapsed), SIM_MAX_TICK_PERIODS * dt), session)
+        tick(min(max(0.0, elapsed), SIM_MAX_TICK_PERIODS * period), session)
 
     arm._tick = timed
 

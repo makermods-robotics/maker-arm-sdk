@@ -4,6 +4,7 @@ stepping of a late control loop, the measured loop rate, frame spacing, and sile
 import sys
 import threading
 import time
+import types
 
 import pytest
 
@@ -117,9 +118,38 @@ def test_a_late_tick_advances_by_the_time_that_passed_up_to_a_cap(monkeypatch):
     monkeypatch.setattr(arm, "_tick", slow_tick)
     run_loop(arm, 0.4)
     period = 0.01
-    assert all(period <= dt <= sdk.arm.MAX_TICK_PERIODS * period + 1e-9 for dt in seen)
+    assert all(0 < dt <= sdk.arm.MAX_TICK_PERIODS * period + 1e-9 for dt in seen)
     assert seen[3] >= 0.015
     assert seen[6] == pytest.approx(sdk.arm.MAX_TICK_PERIODS * period)
+    arm.disable()
+
+
+def test_a_late_wake_is_not_credited_twice(monkeypatch):
+    # The loop wakes half a period late once; the tick after it comes early to keep the schedule. The time credited
+    # to the ticks must not add up to more than the time that passed, or commands outrun the speed limit.
+    arm, _, _ = enabled_arm(control_rate_hz=100.0)
+    period = 0.01
+    sleeps = []
+
+    def late_once(seconds):
+        sleeps.append(seconds)
+        time.sleep(seconds + (0.5 * period if len(sleeps) == 5 else 0.0))
+
+    monkeypatch.setattr(sdk.arm, "time", types.SimpleNamespace(
+        perf_counter=time.perf_counter, monotonic=time.monotonic, time=time.time, sleep=late_once))
+    ticks = []
+    tick = arm._tick
+
+    def timed_tick(dt, session=None):
+        ticks.append((time.perf_counter(), dt))
+        tick(dt, session)
+
+    monkeypatch.setattr(arm, "_tick", timed_tick)
+    run_loop(arm, 0.2)
+    credited = [dt for _, dt in ticks[1:]]
+    passed = [b - a for (a, _), (b, _) in zip(ticks, ticks[1:])]
+    assert all(c <= p + 0.002 for c, p in zip(credited, passed))
+    assert sum(credited) <= sum(passed) + 0.002
     arm.disable()
 
 
