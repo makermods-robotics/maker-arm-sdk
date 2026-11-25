@@ -243,3 +243,35 @@ assert _planner._pool.unavailable is None
     result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, env=env, timeout=120)
     assert result.returncode == 0, result.stderr
     assert marker.read_text() == "x"
+
+
+def test_a_helper_that_fails_to_start_once_is_tried_again_on_the_next_plan(setup, monkeypatch):
+    pool = planner._Pool()
+    monkeypatch.setattr(planner, "_pool", pool)
+    real_helper, calls = planner._Helper, []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError(11, "Resource temporarily unavailable")   # EAGAIN: no process slot this once
+        return real_helper()
+
+    monkeypatch.setattr(planner, "_Helper", flaky)
+    assert timed_plan(setup, limit=30.0)[0].q is not None             # solved here, this once
+    assert timed_plan(setup, limit=30.0)[0].q is not None
+    assert len(calls) == 2 and len(pool._idle) == 1                  # the second plan used a helper again
+
+
+def test_an_in_process_plan_that_ends_past_its_limit_is_refused(setup, monkeypatch):
+    monkeypatch.setattr(planner, "_pool", planner._Pool())
+    monkeypatch.setattr(planner.sys, "executable", "/nonexistent/python")   # no helper process can be created
+    solve = planner.plan_ee
+
+    def late(*a, **k):                                                 # the last chunk crosses the limit
+        result = solve(*a, **k)
+        time.sleep(0.4)
+        return result
+
+    monkeypatch.setattr(planner, "plan_ee", late)
+    result, _ = timed_plan(setup, limit=0.3)
+    assert result.q is None and "timed out" in result.reason

@@ -14,8 +14,9 @@ Planning is bounded. A path longer than ``MAX_PATH_TICKS`` is refused before it 
 ``PLAN_MARGIN_S`` plus ``PLAN_S_PER_TICK`` per tick to solve it (again for each slower retiming), never more than
 ``PLAN_CEILING_S`` in all. The caller's ``limit`` and ``cancel`` apply on top. A helper that runs out of time, is
 cancelled, dies or cannot be talked to is killed and the plan is refused (``EEPlan.q`` None, with the reason); the
-next plan starts a fresh helper. Only when no helper process can be created at all (no subprocess support) is the
-plan solved in this process, under the same limits, checked between chunks of the path.
+next plan starts a fresh helper. Only when no helper process can be created (no subprocess support, or none for the
+moment) is that plan solved in this process, under the same limits, checked between chunks of the path and once
+more at the end; the next plan tries a helper again.
 """
 
 from __future__ import annotations
@@ -216,23 +217,24 @@ class _Pool:
     def __init__(self):
         self._lock = threading.Lock()
         self._idle: list[_Helper] = []
-        self.unavailable: Optional[str] = None   # why no helper process can be created here
+        self.unavailable: Optional[str] = None   # why the last helper could not be created, if it could not
 
     def plan(self, args, limit: Optional[float] = None, cancel=None) -> EEPlan:
         budget = _Budget(limit, cancel)
-        if self.unavailable is None:
-            with self._lock:
-                helper = self._idle.pop() if self._idle else None
-            if helper is None:
-                try:
-                    helper = _Helper()
-                except (OSError, ValueError, NotImplementedError) as e:
-                    # No process can be created on this platform: solve here, under the same limits.
-                    self.unavailable = str(e) or type(e).__name__
-                    log.warning("move_ee planning helper could not be started (%s); solving paths in this process",
-                                self.unavailable)
-            if helper is not None:
-                return self._plan_in(helper, args, budget)
+        with self._lock:
+            helper = self._idle.pop() if self._idle else None
+        if helper is None:
+            try:
+                helper = _Helper()
+                self.unavailable = None
+            except (OSError, ValueError, NotImplementedError) as e:
+                # No process could be created (no subprocess support, or none for now): solve this plan here, under
+                # the same limits; the next plan tries a helper again.
+                self.unavailable = str(e) or type(e).__name__
+                log.warning("move_ee planning helper could not be started (%s); solving this path in this process",
+                            self.unavailable)
+        if helper is not None:
+            return self._plan_in(helper, args, budget)
         return _plan_here(args, budget)
 
     def _plan_in(self, helper: _Helper, args, budget: _Budget) -> EEPlan:
@@ -280,7 +282,9 @@ def _plan_here(args, budget: _Budget) -> EEPlan:
     """``plan_ee`` in this process, stopped between chunks of the path when ``budget`` runs out or is cancelled."""
     try:
         budget.check()
-        return plan_ee(*args, progress=budget.ticks, check=budget.check)
+        result = plan_ee(*args, progress=budget.ticks, check=budget.check)
+        budget.check()   # the last chunk may have crossed the limit: a late plan authorises nothing
+        return result
     except PlanStopped as e:
         return EEPlan(None, str(e))
 
