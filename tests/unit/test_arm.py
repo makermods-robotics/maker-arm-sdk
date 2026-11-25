@@ -1,4 +1,5 @@
 import math
+import threading
 from dataclasses import replace
 import time
 
@@ -287,6 +288,38 @@ def test_a_joint_that_went_silent_is_not_judged_at_rest_on_its_last_reading():
         assert arm.stop() is False
         assert arm.state in (ArmState.ENABLED, ArmState.FAULT)
     finally:
+        arm.disable()
+        arm.disconnect()
+
+
+def test_a_stalled_loop_does_not_release_on_a_reading_from_before_the_stall(monkeypatch):
+    # The motors answered after the return began, then the loop stalled: nothing is unanswered, but the readings
+    # are old. Release needs a reading younger than feedback_timeout.
+    arm, _, fakes = make(**fast_rest(rest_timeout=0.6))
+    arm.connect()
+    arm.enable()
+    stalled = threading.Event()
+    tick, wait = arm._tick, arm._wait_ticks
+
+    def stalling_tick(dt, session=None):
+        if stalled.is_set():
+            time.sleep(0.01)   # the loop runs late and sends nothing
+            return None
+        return tick(dt, session)
+
+    def wait_then_stall(n, timeout=1.0):
+        ok = wait(n, timeout)
+        stalled.set()
+        time.sleep(0.4)
+        return ok
+
+    monkeypatch.setattr(arm, "_tick", stalling_tick)
+    monkeypatch.setattr(arm, "_wait_ticks", wait_then_stall)
+    try:
+        assert arm.stop() is False
+        assert arm.state in (ArmState.ENABLED, ArmState.FAULT) and fakes[1].enabled
+    finally:
+        stalled.clear()
         arm.disable()
         arm.disconnect()
 

@@ -1069,7 +1069,7 @@ class Arm:
         with self._target_lock:
             self._synced = [True] * cfg.n_joints
         worst = max(abs(start[i] - rest[i]) for i in include)
-        if worst <= cfg.rest_arrived and self._measured_since(include, sequences):
+        if worst <= cfg.rest_arrived and self._measured_since(include, sequences) and self._recent(include):
             return True
         period = 1.0 / cfg.rest_rate_hz
         duration = worst / cfg.rest_speed
@@ -1093,7 +1093,7 @@ class Arm:
             if not self._rest_feedback_ok(include, pos):
                 return False
             worst = max(abs(pos[i] - rest[i]) for i in include)
-            fresh = self._measured_since(include, sequences)
+            fresh = self._measured_since(include, sequences) and self._recent(include)
             if worst <= cfg.rest_arrived and fresh:
                 return True
             if best - worst < cfg.rest_stall_improvement:
@@ -1121,6 +1121,12 @@ class Arm:
         Arrival is judged only on such readings, never on the cached pose of a motor that has gone
         silent."""
         return all(self.motors[i].feedback_sequence != sequences[i] for i in include)
+
+    def _recent(self, include: list[int]) -> bool:
+        """Is every joint's latest reading younger than feedback_timeout? Rest is judged (and torque released) only
+        on such readings: a loop that stalled after the motors last answered leaves nothing unanswered, but its
+        readings say nothing about where the arm is now."""
+        return all(self.motors[i].feedback_age <= self.config.feedback_timeout for i in include)
 
     def _rest_feedback_ok(self, include: list[int], positions: list[float]) -> bool:
         for i in include:
