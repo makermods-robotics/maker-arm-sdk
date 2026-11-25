@@ -9,3 +9,4 @@ bench_results*.csv
 logs/
 configs/*.bak
 configs/bench_*.yaml
+CLAUDE.md
