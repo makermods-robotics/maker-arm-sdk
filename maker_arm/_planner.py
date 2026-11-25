@@ -265,6 +265,17 @@ _pool = _Pool()
 atexit.register(_pool.close)
 
 
+def _forget_helpers_after_fork() -> None:
+    # A forked child shares the parent's helper pipes: it starts with an empty pool and leaves those helpers to the
+    # parent (nothing is closed or killed here).
+    _pool._lock = threading.Lock()
+    _pool._idle = []
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_forget_helpers_after_fork)
+
+
 def _plan_here(args, budget: _Budget) -> EEPlan:
     """``plan_ee`` in this process, stopped between chunks of the path when ``budget`` runs out or is cancelled."""
     try:

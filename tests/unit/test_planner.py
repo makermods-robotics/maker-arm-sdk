@@ -3,6 +3,7 @@ a fallback only when no helper can run, planning bounded by time and cancel, and
 imported by the helper."""
 
 import math
+import os
 import subprocess
 import sys
 import threading
@@ -194,6 +195,28 @@ def test_the_planning_ceiling_bounds_a_plan_across_retimings(setup, helper_code,
     monkeypatch.setattr(planner, "PLAN_S_PER_TICK", 10.0)   # the per-tick allowance alone would wait for minutes
     result, took = timed_plan(setup)
     assert result.q is None and "timed out" in result.reason and took < 2.0
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this platform")
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_a_forked_child_starts_its_own_helpers_and_leaves_the_parents_alone(setup):
+    chain, ik, q0, start = setup
+    target = (start + [0, 0, 0.01]).tolist()
+    assert planner.plan(chain, ik, target, None, q0, 50.0, None).q is not None
+    parent_helpers = [h.proc.pid for h in planner._pool._idle]
+    assert parent_helpers
+    pid = os.fork()
+    if pid == 0:   # the child: an empty pool, and its own helper works
+        code = 1
+        try:
+            if not planner._pool._idle and planner.plan(chain, ik, target, None, q0, 50.0, None).q is not None:
+                code = 0
+        finally:
+            os._exit(code)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert [h.proc.pid for h in planner._pool._idle] == parent_helpers
+    assert planner.plan(chain, ik, target, None, q0, 50.0, None).q is not None
 
 
 def test_helper_never_imports_the_callers_main_module(tmp_path):
