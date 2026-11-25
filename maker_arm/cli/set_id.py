@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Change a motor's CAN ID (persistent), with torque off. Only that one motor should answer on
 FROM, and it must be de-energized; the command refuses when TO already answers, when TO is a joint's ID in the
-profile and --replacing does not name that joint (or FROM is another joint's ID), and when the motor reports torque
-on, holds torque or moves. Update the profile afterwards.
+profile and --replacing does not name that joint (or FROM is another joint's ID), and when the motor is not shown to
+be de-energized. Update the profile afterwards.
 """
 
 from __future__ import annotations
