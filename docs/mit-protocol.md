@@ -12,6 +12,7 @@ parameter replies come back on `0x300|id` (read) or `0x400|id` (write).
 | State read / clear fault | `FF FF FF FF FF FF FF FB` | clears faults, returns feedback |
 | Fault query | `FF FF FF FF FF FF 00 FB` | returns the fault word, changes nothing |
 | Set zero | `FF FF FF FF FF FF FF FE` | current position becomes zero (persists) |
+| Set ID | `FF FF FF FF FF FF id FA` | the motor answers on `id` from then on; replies with its MCU identifier on its motor ID |
 | MIT control | q16 · dq12 · kp12 · kd12 · tau12 | impedance command, returns feedback |
 | Param read | ID `0x300|id`: index LE16, 6 zero bytes | firmware >= RS00 0.0.3.27 / RS02 0.2.3.32 |
 | Param write | ID `0x400|id`: index LE16, 2 zero bytes, value LE32 | same firmware |

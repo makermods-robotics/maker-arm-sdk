@@ -7,7 +7,7 @@ from fakes import FakeBus, FakeMotor, feedback_bytes
 from maker_arm import motor as motor_module
 from maker_arm import protocol as p
 from maker_arm.config import JointConfig
-from maker_arm.errors import ArmError, ConnectError, FaultLatched, ParamTimeout
+from maker_arm.errors import ArmError, ConnectError, FaultLatched, ParamTimeout, StateError
 from maker_arm.motor import Motor, MotorFeedback, MotorStatus, route
 from maker_arm.transport.base import CanId
 
@@ -155,11 +155,57 @@ def test_set_zero_persists_in_the_motor():
     assert fake.log == ["zero"] and fake.position == 0.0
 
 
-def test_set_id_is_not_documented_for_mit_and_sends_nothing():
-    motor, bus = wired(FakeMotor(1))
-    with pytest.raises(ArmError, match="not documented"):
-        motor.set_id(5)
-    assert bus.sent == []
+def test_set_id_writes_the_id_and_verifies_the_motor_answers_there():
+    fake = FakeMotor(7)
+    motor, bus = wired(fake)
+    motor.set_id(8)
+    assert fake.motor_id == 8 and motor.motor_id == 8 and ("set_id", 8) in fake.log
+    assert (7, bytes([0xFF] * 6 + [8, 0xFA])) in [(i, bytes(d)) for i, d in bus.sent]
+    assert bus.recv_callback == motor.handle_frame               # the tap is removed
+    motor.set_id(7)
+    assert fake.motor_id == 7 and motor.motor_id == 7
+
+
+def test_set_id_reports_a_motor_that_keeps_its_id():
+    fake = FakeMotor(7)
+    fake.apply_id_change = False
+    motor, _ = wired(fake)
+    with pytest.raises(StateError, match="still answers on ID 7"):
+        motor.set_id(8, timeout=0.02)
+    assert motor.motor_id == 7
+
+
+def test_set_id_reports_a_motor_that_stops_answering():
+    fake = FakeMotor(7)
+    motor, _ = wired(fake)
+    original = fake.handle
+
+    def then_silent(can_id, data):
+        replies = original(can_id, data)
+        if data[7] == 0xFA:
+            fake.online = False
+        return replies
+
+    fake.handle = then_silent
+    with pytest.raises(StateError, match="neither ID 7 nor ID 8"):
+        motor.set_id(8, timeout=0.02)
+
+
+def test_set_id_refuses_bad_ids_a_fault_and_an_enabled_motor_without_writing():
+    fake = FakeMotor(3, params_supported=True)
+    motor, bus = wired(fake)
+    motor.validate(timeout=0.005)
+    with pytest.raises(ValueError):
+        motor.set_id(128)
+    motor.set_id(3)                                              # no-op
+    fake.faulted = True
+    with pytest.raises(StateError, match="fault"):
+        motor.set_id(9, timeout=0.02)
+    fake.faulted = False
+    motor.enable_confirmed()
+    with pytest.raises(StateError, match="disable the motor"):
+        motor.set_id(9, timeout=0.02)
+    assert not any(bytes(d)[7] == 0xFA for _, d in bus.sent) and fake.motor_id == 3
 
 
 # ── connect-time validation and mode bits ──
