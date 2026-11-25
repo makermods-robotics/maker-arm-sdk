@@ -198,6 +198,7 @@ def test_the_planning_ceiling_bounds_a_plan_across_retimings(setup, helper_code,
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this platform")
+@pytest.mark.skipif(sys.platform == "darwin", reason="fork() without exec in a threaded process is unsafe on macOS")
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_a_forked_child_starts_its_own_helpers_and_leaves_the_parents_alone(setup):
     chain, ik, q0, start = setup

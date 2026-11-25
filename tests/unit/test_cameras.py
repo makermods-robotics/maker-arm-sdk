@@ -247,8 +247,9 @@ def test_url_stream_gives_the_newest_frame_never_a_backlog(mjpeg):
             assert frame is not None and frame.age_s < 0.1
             # the frame shown is one of the last few sent, not the next one in a queue
             assert (server.sent - gray(frame.image)) % 250 <= 10
-        assert cam.skipped > 50 and cam._cap.received >= server.sent - 10
-        assert cam.frames + cam.skipped >= cam._cap.received - 1   # every JPEG decoded or skipped for a newer one
+        assert cam._cap.received >= server.sent - 10
+        # every JPEG received was decoded or skipped for a newer one (a fast reader skips none)
+        assert cam.frames + cam.skipped >= cam._cap.received - 1
         fresh = cam.read(timeout=1.0)
         assert fresh.age_s < 0.1 and abs(fresh.stamp - time.time()) < 0.5
 

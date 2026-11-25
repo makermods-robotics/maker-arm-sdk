@@ -28,6 +28,10 @@ class MjpegServer:
         server = self
 
         class Handler(BaseHTTPRequestHandler):
+            # Each test frame is one small write: with Nagle's algorithm the next one waits for the client's
+            # delayed ACK (up to ~100 ms on macOS), which caps the stream near 10 fps.
+            disable_nagle_algorithm = True
+
             def log_message(self, *a):
                 pass
 
@@ -55,7 +59,7 @@ class MjpegServer:
                             self.wfile.write(b"a")
                             self.wfile.flush()
                             time.sleep(0.05)
-                    except (BrokenPipeError, ConnectionResetError, OSError):
+                    except OSError:                  # the client went away (ConnectionError included)
                         return
                 if self.path == "/text":
                     self.send_response(200)
@@ -78,7 +82,7 @@ class MjpegServer:
                         self.wfile.write(head + b"\r\n" + data + b"\r\n")
                         self.wfile.flush()
                         time.sleep(1.0 / server.fps)
-                except (BrokenPipeError, ConnectionResetError):
+                except ConnectionError:                  # the client closed the stream (aborted on Windows)
                     pass
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
