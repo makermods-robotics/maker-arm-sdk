@@ -21,9 +21,10 @@ from .common import (CliError, Interrupt, achieved, add_for_arg, add_gravity_arg
 
 
 def model_for(config):
-    """``q -> holding torque per chain joint`` (N*m, with the profile's scales), or None."""
+    """``q -> holding torque per chain joint`` (N*m, with the profile's scales), or None. ``q`` may carry
+    the joints after the chain (the gripper); the model reads the chain's."""
     ff = from_config(config)
-    return ff.model if ff is not None else None
+    return (lambda q: ff.model(q[:ff.n])) if ff is not None else None
 
 
 def float_arms(a, out) -> dict:
