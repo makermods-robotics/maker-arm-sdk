@@ -41,10 +41,13 @@
   profile and only when `replacing` (`--replacing JOINT`) names that joint; if both IDs answer afterwards, that
   Arm refuses to enable or attach until the bus is checked and a new Arm is made.
 - `stop()` ends on the support: near the supported rest pose (profile `rest_window_deg`; the Maker profile sets
-  12) the weight-carrying joints are pressed up to 3 deg toward it rather than returned to where the enable found
-  them, then their gains and gravity feed-forward ramp to zero over 0.5 s before torque off, which happens only if
-  the arm stayed within 4 deg and fresh readings show it still. A return that stops a little short no longer
-  becomes the next session's rest pose.
+  12) the weight-carrying joints go a little past where the enable found them toward it (at most 3 deg and
+  1.75 N*m of proportional effort, inside the limits), so a return that stops a little short no longer becomes
+  the next session's rest pose. After a verified return the control loop stops and each returned joint is read
+  once more; torque goes off only if the readings are fresh and no joint moved away from rest. stop() holds
+  instead when no joint returns to rest or a weight-carrying joint that does not return stands away from rest,
+  and every way out of stop() that does not release (a second Ctrl-C included) leaves the arm holding at full
+  gains with the control loop running.
 - Maker URDF: `link_003`'s centre of mass is 48 mm from the shoulder axis (was 134 mm), fitted to holding torques
   measured on the arm at 16 low poses (`tests/unit/gravity_measured.json`): the shoulder_lift residual falls from
   0.58 to 0.15 N*m RMS (static friction there is about 0.06), elbow_flex and wrist_flex are unchanged. Over that

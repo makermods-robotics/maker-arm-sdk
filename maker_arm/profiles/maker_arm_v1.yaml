@@ -11,7 +11,7 @@ max_velocity: 5.0          # rad/s command rate limit
 limit_margin: 0.0
 feedback_timeout: 0.25     # feedback older than this stops the arm
 # The arm lies on its support short of the clipped zero pose (shoulder_lift about -4.5, elbow_flex about +10 deg).
-# Enabled within this of that pose, the return to rest presses shoulder, elbow and wrist_flex onto the support.
+# Enabled within this of that pose, the return to rest presses shoulder, elbow and wrist_flex lightly onto the support.
 rest_window_deg: 12
 fault_poll_interval: 0.25
 # Model: the fitted URDF (package data), drawn y-up; the base rotation turns it z-up. The arm

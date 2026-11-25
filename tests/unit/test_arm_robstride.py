@@ -265,13 +265,14 @@ def run_cycle(arm, up=0.8):
 HOVER_DEG = [0.0, -15.0, 22.0, 0.0, 0.0, 0.0]
 
 
-def shoulder_on_its_support(sim, support_deg=-4.5, lag_deg=1.0):
+def shoulder_on_its_support(sim, support_deg=-4.5, force_nm=1.0):
     """The simulated shoulder_lift as the real one behaves at rest: it cannot go past its support (``support_deg``,
-    short of the profile's clipped rest pose), coming back toward it under power it stops up to ``lag_deg`` short,
-    and released it stays where it is (static friction near its balance point)."""
+    short of the profile's clipped rest pose); coming back toward it under power it stops where the proportional
+    term balances a standing ``force_nm`` (friction and model error: force/kp short of the command, on the lifted
+    side); released, it stays where it is (static friction near its balance point)."""
     motor = sim.motor("shoulder_lift")
     motor.track = False                          # the position is this model's, not the command's
-    support, lag = math.radians(support_deg), math.radians(lag_deg)
+    support = math.radians(support_deg)
     handle, state = motor.handle, {"q": motor.position}
 
     def supported(can_id, data):
@@ -281,7 +282,7 @@ def shoulder_on_its_support(sim, support_deg=-4.5, lag_deg=1.0):
             cmd, kp, _ = motor.frames[-1]
             q = state["q"]
             if motor.enabled and kp >= 1.0:
-                q = max(q, cmd - lag) if cmd >= q else cmd
+                q = max(q, cmd - force_nm / kp) if cmd >= q else cmd
                 q = min(q, support)
             state["q"] = motor.position = q
         return replies
@@ -332,52 +333,6 @@ def test_an_arm_enabled_away_from_rest_returns_where_it_started():
         arm.disconnect()
 
 
-def test_an_arm_that_is_not_supported_where_it_started_keeps_holding():
-    arm, _, fakes = supported_arm(0.8, support=-1.9)            # enabled in the air (another program held it)
-    arm.connect()
-    arm.enable()
-    try:
-        assert arm.stop() is False                                # the settle saw it sink and stiffened again
-        assert arm.state is ArmState.ENABLED and fakes[1].enabled
-        # it stiffened again after a few degrees (4 deg plus this model's friction steps and the check interval);
-        # unsupported and released, it would have fallen to -1.9 rad
-        assert fakes[1].position > 0.8 - math.radians(10.0)
-        assert arm._gain_scale is None
-    finally:
-        arm.disable()
-        arm.disconnect()
-
-
-def test_a_loop_that_stalls_during_the_settle_keeps_the_arm_holding(monkeypatch):
-    arm, _, fakes = supported_arm(0.33)
-    arm.connect()
-    arm.enable()
-    tick = arm._tick
-    stalled = {"on": False}
-
-    def maybe(dt, session=None):
-        if stalled["on"]:
-            time.sleep(0.01)
-            return None
-        return tick(dt, session)
-
-    monkeypatch.setattr(arm, "_tick", maybe)
-    settle = arm._settle_onto_support
-
-    def stall_then_settle(*a, **k):
-        stalled["on"] = True
-        return settle(*a, **k)
-
-    monkeypatch.setattr(arm, "_settle_onto_support", stall_then_settle)
-    try:
-        assert arm.stop() is False
-        assert arm.state is ArmState.ENABLED
-    finally:
-        stalled["on"] = False
-        arm.disable()
-        arm.disconnect()
-
-
 def test_a_set_id_that_leaves_both_ids_answering_keeps_the_joint_from_enabling():
     source, occupant = FakeMotor(1, position=0.3), FakeMotor(9, online=False)
     source.apply_id_change = False                               # the write is ignored ...
@@ -397,3 +352,22 @@ def test_a_set_id_that_leaves_both_ids_answering_keeps_the_joint_from_enabling()
         arm.enable()
     assert not source.enabled
     arm.disconnect()
+
+
+def test_the_press_toward_the_support_is_bounded_by_effort_and_stays_inside_the_limits():
+    from maker_arm import testing
+    rest = [0.0, math.radians(-4.5), math.radians(10.0), math.radians(-1.2), 0.0, 0.0, math.radians(-3.0)]
+    arm, _ = testing.simulated_arm(positions=rest)
+    arm.connect()
+    arm.enable()
+    try:
+        cfg, q = arm.config, arm.get_joint_positions()
+        for i in (1, 2, 3):                                         # the joints that carry the arm's weight
+            press = abs(arm.rest_pose[i] - q[i])
+            assert press <= min(math.radians(3.0), 2.0 / cfg.joints[i].kp) + 1e-9
+            assert press * cfg.joints[i].kp <= 2.0 + 1e-9               # N*m of proportional effort at most
+            assert cfg.joints[i].lo <= arm.rest_pose[i] <= cfg.joints[i].hi
+        assert arm.rest_pose[0] == pytest.approx(q[0]) and arm.rest_pose[4:] == pytest.approx(q[4:])
+    finally:
+        arm.disable()
+        arm.disconnect()

@@ -506,6 +506,19 @@ def test_a_cancelled_move_ee_never_overwrites_a_newer_command(urdf):
         teardown(arm)
 
 
+def test_stop_does_not_release_a_weight_carrying_joint_left_out_of_the_return(urdf):
+    arm, _, fakes_ = model_arm(urdf, joints=[replace(j, return_to_rest=(i == 1))
+                                             for i, j in enumerate(model_joints())])
+    arm.enable()
+    try:
+        arm._synced = [True, True]
+        assert arm.move_to([0.8, arm.get_commanded_positions()[1]], timeout=3.0)   # the pendulum raised
+        assert arm.stop() is False
+        assert arm.state is ArmState.ENABLED and fakes_[1].enabled
+    finally:
+        teardown(arm)
+
+
 def test_move_ee_without_wait_streams_in_the_background(urdf):
     arm, _, _ = model_arm(urdf)
     arm.enable()

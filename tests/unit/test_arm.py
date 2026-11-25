@@ -354,6 +354,97 @@ def test_a_return_to_rest_overtaken_by_estop_and_enable_writes_nothing_into_the_
         arm.disconnect()
 
 
+def holding_at_full_gains(arm, fakes):
+    """The loop runs and the last frame to the returned joint carries the profile's kp."""
+    time.sleep(0.05)
+    return (arm._running and arm._loop_thread is not None and arm._loop_thread.is_alive()
+            and fakes[1].frames and fakes[1].frames[-1][1] == pytest.approx(arm.config.joints[0].kp, abs=0.2))
+
+
+def test_a_ctrl_c_during_the_return_leaves_the_arm_holding_at_full_gains(monkeypatch):
+    arm, _, fakes = make(**fast_rest())
+    arm.connect()
+    arm.enable()
+    try:
+        arm._synced = [True, True]
+        assert arm.move_to([1.0, -0.5], timeout=3.0)
+        ramp = arm._rest_feedback_ok
+        calls = []
+
+        def interrupted(*a, **k):
+            calls.append(1)
+            if len(calls) == 5:
+                raise KeyboardInterrupt
+            return ramp(*a, **k)
+        monkeypatch.setattr(arm, "_rest_feedback_ok", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            arm.stop()
+        assert arm.state is ArmState.ENABLED and not arm._returning and fakes[1].enabled
+        assert holding_at_full_gains(arm, fakes)
+        assert arm.set_joint_targets([0.9, -0.5])                 # it takes targets again
+    finally:
+        arm.disable()
+        arm.disconnect()
+
+
+def test_a_ctrl_c_just_before_the_release_leaves_the_arm_holding_at_full_gains(monkeypatch):
+    arm, _, fakes = make(**fast_rest())
+    arm.connect()
+    arm.enable()
+
+    def interrupted():
+        raise KeyboardInterrupt
+    monkeypatch.setattr(arm, "_release_all", interrupted)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            arm.stop()
+        assert arm.state is ArmState.ENABLED and not arm._returning and fakes[1].enabled
+        assert holding_at_full_gains(arm, fakes)
+    finally:
+        monkeypatch.undo()
+        arm.disable()
+        arm.disconnect()
+
+
+def test_stop_rechecks_the_pose_after_the_loop_stops_and_holds_if_it_moved(monkeypatch):
+    arm, _, fakes = make(**fast_rest())
+    arm.connect()
+    arm.enable()
+    stop_loop = arm._stop_loop
+    moved = []
+
+    def loop_stops_then_the_arm_moves():
+        stop_loop()
+        if not moved and arm.state is ArmState.ENABLED:
+            moved.append(1)
+            fakes[1].track = False
+            fakes[1].position += 0.1                               # nudged while the loop was stopping
+    monkeypatch.setattr(arm, "_stop_loop", loop_stops_then_the_arm_moves)
+    try:
+        assert arm.stop() is False
+        assert arm.state is ArmState.ENABLED and fakes[1].enabled and not arm._returning
+        assert holding_at_full_gains(arm, fakes)
+    finally:
+        monkeypatch.undo()
+        arm.disable()
+        arm.disconnect()
+
+
+def test_stop_does_not_release_when_no_joint_returns_to_rest():
+    joints = [replace(j, return_to_rest=False) for j in fakes.two_joint_config().joints]
+    arm, _, fake = make(joints=joints, **fast_rest())
+    arm.connect()
+    arm.enable()
+    try:
+        arm._synced = [True, True]
+        assert arm.move_to([1.0, -0.5], timeout=3.0)               # raised, and nothing will bring it back
+        assert arm.stop() is False
+        assert arm.state is ArmState.ENABLED and fake[1].enabled and not arm._returning
+    finally:
+        arm.disable()
+        arm.disconnect()
+
+
 # ── regressions from the independent review ──
 def test_second_fault_while_holding_is_still_handled():
     arm, _, fakes = enabled_arm()
