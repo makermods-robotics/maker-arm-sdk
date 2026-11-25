@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `enable()` refuses an arm another program holds on firmware that cannot report torque state: a motor that reads
+  more than 0.1 N*m of torque counts as energized, so the neutral preload never lets a held arm fall. `rest` and
+  `attach()` take such an arm over as before.
 - The control loop keeps its rate on small computers. On a big.LITTLE board (Cortex-A53 + A72, gs_usb) it held
   about 147 Hz at rest and fell to 20 Hz while `move_ee` solved its path, until the arm faulted on stale feedback;
   now about 192 Hz at rest and 199 Hz during `move_ee` planning.

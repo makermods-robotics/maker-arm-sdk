@@ -20,8 +20,10 @@
   stands away from rest. Otherwise (and on a second Ctrl-C) the arm keeps holding its pose at full gains
   and the CLI waits for you to type `RELEASE`; without a terminal, or after a second Ctrl-C, it
   exits leaving the arm holding (exit status 1, `"then": "holding"`) and says how to release it.
-- `enable()` refuses motors that already have torque on; `attach()` takes such an arm over where it
-  holds: no zero-gain frame and no enable reach those motors, only holding frames at the measured pose.
+- `enable()` refuses motors that already have torque on, and, on firmware that cannot report torque state,
+  motors that read more than 0.1 N*m of torque (another program holding the arm); `attach()` and `rest` take
+  such an arm over where it holds: no zero-gain frame and no enable reach those motors, only holding frames at the
+  measured pose.
 - A fault while floating (`float_mode()`, `gravity`, an arm leader), or a failing gravity model,
   stiffens the arm at its measured pose with the profile's gains and holds it as on any fault.
 - On a fault (stale feedback for 0.25 s, a motor fault, the gripper at 55 °C, its warning flag)

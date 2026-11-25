@@ -39,7 +39,11 @@ REST_PRESS = math.radians(3.0)
 REST_PRESS_NM = 1.75
 REST_FRESH_S = 0.05
 REST_RECHECK = math.radians(1.0)
-HEIGHT_JOINT_M_PER_RAD = 0.02        # a joint that moves the tool point up or down at least this much carries weight
+HEIGHT_JOINT_M_PER_RAD = 0.02
+# A motor whose firmware cannot report torque state counts as energized when a fresh reading shows more torque than
+# this. A de-energized motor reads half a step of its torque code (-0.0034 / -0.0042 N*m measured); held by a program,
+# the joints that carry the arm's weight read 1-5 N*m, at hover and at rest alike.
+HELD_TORQUE_NM = 0.1        # a joint that moves the tool point up or down at least this much carries weight
 # Start-to-start spacing of the frames one tick sends: about one command and its reply on a 1 Mbit/s bus. A send
 # that itself takes longer (a slow USB round trip) needs no extra wait.
 FRAME_SPACING_S = 200e-6
@@ -404,6 +408,17 @@ class Arm:
                 raise ConnectError(f"motors {', '.join(holding)} already have torque on; nothing was sent to "
                                    f"them. Take the arm over with attach() ('{CLI_NAME} rest' brings it down "
                                    "and releases it)")
+            # Old firmware reports no torque state, but a motor that is producing torque is energized: another
+            # program holds the arm, and the neutral preload below would let it fall.
+            loaded = [f"{m.motor_id} ({j.label}: {m.feedback.torque:+.2f} N*m)"
+                      for m, j in zip(self.motors, self.config.joints)
+                      if m.feedback is not None and m.feedback.enabled is None
+                      and abs(m.feedback.torque) > HELD_TORQUE_NM]
+            if loaded:
+                raise ConnectError(f"motors {', '.join(loaded)} are producing torque, and their firmware does not "
+                                   "report torque state: another program is probably holding the arm. Nothing was "
+                                   f"sent to them. Take the arm over with attach() ('{CLI_NAME} rest' brings it "
+                                   "down and releases it)")
             pos = self.get_joint_positions()
             self._check_start(pos, range(self.config.n_joints))
             self._gravity = self._make_gravity()

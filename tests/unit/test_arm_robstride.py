@@ -391,3 +391,39 @@ def test_both_ids_answering_after_a_replacement_blocks_the_replaced_joint_too():
     with pytest.raises(ConnectError, match="unverified"):
         arm.enable()
     arm.disconnect()
+
+
+# ── an arm another program holds, on firmware that does not report torque state ──
+def held_by_another_program(positions_deg, torques_nm):
+    from maker_arm import testing
+    arm, sim = testing.simulated_arm(positions=[math.radians(v) for v in positions_deg])
+    for motor in sim.motors.values():
+        motor.params_supported = False        # old firmware: no parameter access, no mode bits, no torque state
+    for name, tau in torques_nm.items():
+        motor = sim.motor(name)
+        motor.enabled = True                  # energized by the other program; old firmware reports no mode bits
+        motor.torque = tau
+    return arm, sim
+
+
+def test_enable_refuses_a_legacy_arm_that_is_producing_holding_torque_and_sends_it_nothing():
+    arm, sim = held_by_another_program([0, -15, 22, 0, 0, 0, -3], {"shoulder_lift": 0.4, "elbow_flex": 4.8,
+                                                                    "wrist_flex": 1.5})
+    arm.connect()
+    assert all(m.feedback.enabled is None for m in arm.motors)   # torque state not reported
+    with pytest.raises(ConnectError, match="rest"):
+        arm.enable()
+    assert arm.state is ArmState.CONNECTED
+    assert all(not m.frames and "enable" not in m.log for m in sim.motors.values())   # no preload, no enable
+    arm.disconnect()
+
+
+def test_a_legacy_arm_resting_de_energized_enables_as_before():
+    arm, sim = held_by_another_program([0, -4.2, 10.3, -1, 0, 0, -3], {})
+    for motor in sim.motors.values():
+        motor.enabled, motor.torque = False, -0.0034               # the reading of a de-energized motor
+    arm.connect()
+    arm.enable()
+    assert arm.state is ArmState.ENABLED
+    arm.disable()
+    arm.disconnect()
