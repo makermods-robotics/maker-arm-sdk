@@ -99,6 +99,9 @@ class ArmConfig:
     rest_timeout: float = 10.0                 # s
     rest_arrived: float = math.radians(2.0)
     rest_settle: float = math.radians(6.0)     # accepted after a stall
+    # Enabled within this of the supported rest pose (each joint that carries the arm's weight), the return to
+    # rest presses those joints a little toward it instead of stopping where the enable found them. None: off.
+    rest_window: Optional[float] = None
     rest_stall_improvement: float = math.radians(0.25)
     rest_stall_polls: int = 15
     joints: list[JointConfig] = field(default_factory=list)
@@ -133,6 +136,8 @@ class ArmConfig:
         for name in positive:
             if not getattr(self, name) > 0:
                 raise ValueError(f"{name} must be >0, got {getattr(self, name)}")
+        if self.rest_window is not None and not self.rest_window > 0:
+            raise ValueError(f"rest_window must be >0, got {self.rest_window}")
         if self.limit_margin < 0 or self.full_turn_grace < 0:
             raise ValueError("limit_margin and full_turn_grace must be >=0")
         if not 0 <= self.gravity_scale <= MAX_GRAVITY_SCALE:

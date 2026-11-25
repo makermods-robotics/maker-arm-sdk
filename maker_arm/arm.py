@@ -31,6 +31,18 @@ EE_MIN_SECONDS = _planner.EE_MIN_SECONDS
 # A late control tick advances the commands by the time that really passed, up to this many periods, so speed
 # limits hold in real time when the computer cannot keep the profile's rate.
 MAX_TICK_PERIODS = 4
+# Rest: near the supported rest pose the return presses the weight-carrying joints at most REST_PRESS toward it
+# (bounded contact force), then stop() settles: it holds REST_SETTLE_HOLD_S, ramps their gains and gravity
+# feed-forward to zero over REST_SETTLE_RAMP_S so the arm comes to lie on its support, and releases torque only if
+# no joint moved more than REST_SETTLE_MAX_MOTION meanwhile and fresh readings show it still.
+REST_PRESS = math.radians(3.0)
+REST_SETTLE_HOLD_S = 0.15
+REST_SETTLE_RAMP_S = 0.5
+REST_SETTLE_MAX_MOTION = math.radians(4.0)
+REST_STILL = math.radians(0.3)       # most motion over the last REST_STILL_S before torque off
+REST_STILL_S = 0.1
+REST_FRESH_S = 0.05                  # the readings that authorise torque off are at most this old
+HEIGHT_JOINT_M_PER_RAD = 0.02        # a joint that moves the tool point up or down at least this much carries weight
 # Start-to-start spacing of the frames one tick sends: about one command and its reply on a 1 Mbit/s bus. A send
 # that itself takes longer (a slow USB round trip) needs no extra wait.
 FRAME_SPACING_S = 200e-6
@@ -97,6 +109,8 @@ class Arm:
         # Motion ownership: bumped by every new target, stop, estop, disable, fault, return to rest and new
         # session. A move_ee commits its rows only while the value it took is still current.
         self._motion = 0
+        self._gain_scale: Optional[list[float]] = None   # per joint, kp and gravity feed-forward (stop()'s settle)
+        self._rest_token: Optional[int] = None
         self._released: set[int] = set()      # disabled after a fault (release_on_fault)
         self._faulted: set[int] = set()       # frozen at the fault pose
         self._watchdog_restore: dict[int, object] = {}
@@ -398,7 +412,7 @@ class Arm:
             self._gravity = self._make_gravity()
             self._arm_watchdogs()
             self._start_targets(pos, speed)
-            self.rest_pose = list(pos)
+            self.rest_pose = self._rest_target(pos)
             try:
                 for i, m in enumerate(self.motors):
                     abort_if_cancelled()
@@ -530,6 +544,7 @@ class Arm:
             self._targets_received = False
             self._returning = False
             self._motion += 1
+            self._gain_scale = None
             self._speed = speed
             self._stuck_anchor = [(p, now) for p in pos]
         self._hold = {i: GripperHold(j.hold_torque_nm, (j.lo, j.hi), j.closing_direction)
@@ -695,6 +710,7 @@ class Arm:
             self._released.clear()
             self._faulted.clear()
             self._returning = False
+            self._gain_scale = None
             if self._state in (ArmState.ENABLED, ArmState.FAULT):
                 self._state = ArmState.CONNECTED
 
@@ -720,16 +736,91 @@ class Arm:
             if self._state not in (ArmState.ENABLED, ArmState.FAULT):
                 return True
             try:
-                verified = self._return_to_rest()
+                verified = self._return_to_rest() and self._settle_onto_support(self._rest_token)
             except Exception:
                 log.exception("return to rest failed")
                 verified = False
             if verified:
                 self.disable()
                 return True
-            self._returning = False
-            self.hold_current_position()
+            with self._target_lock:
+                self._gain_scale = None
+            if self._rest_token is not None and self._motion == self._rest_token:
+                self._returning = False
+                self.hold_current_position()
             return False
+
+    def _rest_target(self, pos: list[float]) -> list[float]:
+        """The pose stop() returns to for an arm enabled at ``pos``: ``pos`` itself, except near the supported rest
+        pose (the profile's rest_pose, else zero, clipped into the limits) with ``rest_window`` set: there each
+        joint that carries the arm's weight is pressed at most REST_PRESS toward it, so a return that stops a little
+        short cannot leave the arm, session after session, further from its support."""
+        cfg = self.config
+        if cfg.rest_window is None:
+            return list(pos)
+        try:
+            chain = self.chain
+        except ArmError:
+            return list(pos)
+        base = cfg.rest_pose or [0.0] * cfg.n_joints
+        supported = [min(j.hi - cfg.limit_margin, max(j.lo + cfg.limit_margin, v)) for j, v in zip(cfg.joints, base)]
+        lift = chain.jacobian(supported[:chain.n])[2]
+        carrying = [i for i in range(chain.n) if cfg.joints[i].return_to_rest and abs(lift[i]) >= HEIGHT_JOINT_M_PER_RAD]
+        if not carrying or any(not math.isfinite(pos[i]) or abs(pos[i] - supported[i]) > cfg.rest_window
+                               for i in carrying):
+            return list(pos)
+        target = list(pos)
+        for i in carrying:
+            target[i] = pos[i] + max(-REST_PRESS, min(REST_PRESS, supported[i] - pos[i]))
+        return target
+
+    def _settle_onto_support(self, token: Optional[int]) -> bool:
+        """After a verified return: hold, then ramp the returned joints' gains and gravity feed-forward to zero so the
+        arm lies on its support. True only if no joint moved more than REST_SETTLE_MAX_MOTION and fresh readings
+        show the arm still; otherwise it holds where it is at full gains and returns False."""
+        cfg = self.config
+        n = cfg.n_joints
+        include = [i for i, j in enumerate(cfg.joints)
+                   if j.return_to_rest and i not in self._released and i not in self._faulted]
+        if not include or token is None:
+            return token is not None
+        start = self.get_joint_positions()
+        period = 1.0 / cfg.rest_rate_hz
+        began = time.monotonic()
+
+        def moved_too_far(pos) -> bool:
+            return any(not math.isfinite(pos[i]) or abs(pos[i] - start[i]) > REST_SETTLE_MAX_MOTION for i in include)
+
+        settled = False
+        while True:
+            scale = 1.0 - min(1.0, max(0.0, time.monotonic() - began - REST_SETTLE_HOLD_S) / REST_SETTLE_RAMP_S)
+            with self._target_lock:
+                if self._motion != token:
+                    return False
+                self._gain_scale = [scale if i in include else 1.0 for i in range(n)]
+            pos = self.get_joint_positions()
+            if not self._rest_active() or not self._recent(include) or moved_too_far(pos):
+                break
+            if scale == 0.0:
+                sequences = [m.feedback_sequence for m in self.motors]
+                time.sleep(REST_STILL_S)
+                now = self.get_joint_positions()
+                settled = (self._rest_active() and self._measured_since(include, sequences)
+                           and all(self.motors[i].feedback_age <= REST_FRESH_S for i in include)
+                           and not moved_too_far(now) and all(abs(now[i] - pos[i]) <= REST_STILL for i in include))
+                break
+            time.sleep(period)
+        if settled:
+            return True
+        log.error("the arm did not settle at rest (it moved, or its readings are stale); holding it where it is")
+        positions = self.get_joint_positions()
+        with self._target_lock:
+            if self._motion == token:
+                for i, p in enumerate(positions):
+                    if math.isfinite(p):
+                        self._user_targets[i] = self._internal[i] = p
+            self._gain_scale = None
+        return False
 
     # ── operator actions while torque is off ──
     def set_zero(self, indices: Optional[Sequence[int]] = None) -> None:
@@ -1085,7 +1176,9 @@ class Arm:
             log.exception("return to rest failed")
             return False
         finally:
-            self._returning = False
+            with self._target_lock:
+                if self._motion == self._rest_token:
+                    self._returning = False
 
     def _return_to_rest(self, rest: Optional[list[float]] = None) -> bool:
         cfg = self.config
@@ -1098,6 +1191,7 @@ class Arm:
         with self._target_lock:
             self._returning = True
             self._motion += 1
+            token = self._rest_token = self._motion
             self._speed = None
             for i, p in enumerate(positions):
                 if math.isfinite(p):
@@ -1114,6 +1208,8 @@ class Arm:
         if not self._rest_feedback_ok(include, start):
             return False
         with self._target_lock:
+            if self._motion != token:
+                return False
             self._synced = [True] * cfg.n_joints
         worst = max(abs(start[i] - rest[i]) for i in include)
         if worst <= cfg.rest_arrived and self._measured_since(include, sequences) and self._recent(include):
@@ -1129,13 +1225,15 @@ class Arm:
             if time.monotonic() >= deadline or not self._rest_active():
                 break
             with self._target_lock:
+                if self._motion != token:
+                    return False   # an e-stop, disable or new session took over: never write into it
                 for i in include:
                     self._user_targets[i] = start[i] + (rest[i] - start[i]) * frac
             time.sleep(period)
             if not self._rest_feedback_ok(include, self.get_joint_positions()):
                 return False
         best, stalled = math.inf, 0
-        while time.monotonic() < deadline and self._rest_active():
+        while time.monotonic() < deadline and self._rest_active() and self._motion == token:
             pos = self.get_joint_positions()
             if not self._rest_feedback_ok(include, pos):
                 return False
@@ -1221,6 +1319,7 @@ class Arm:
                 self._internal[i] += step
             commands = list(self._internal)
         feedforward = self._feedforward(commands, now)
+        scale = self._gain_scale
         paced = self._backend.feedback_paced_control
         last_send = None
         for i, j in enumerate(cfg.joints):
@@ -1238,6 +1337,9 @@ class Arm:
                 continue
             # A faulted (not released) joint keeps receiving its frozen hold command.
             position, kp, kd = commands[i], j.kp, j.kd
+            tau = feedforward[i]
+            if scale is not None and scale[i] != 1.0:
+                kp, tau = kp * scale[i], tau * scale[i]   # stop()'s settle onto the support
             sequence = motor.feedback_sequence
             try:
                 hold = self._hold.get(i)
@@ -1250,7 +1352,7 @@ class Arm:
                         self._busy_wait_us(gap * 1e6)
                 last_send = time.perf_counter()
                 sent_at = time.monotonic()
-                motor.send_command(self._to_motor(i, position), 0.0, kp, kd, feedforward[i])
+                motor.send_command(self._to_motor(i, position), 0.0, kp, kd, tau)
             except Exception as e:
                 if i not in self._faulted:
                     self._enter_fault(f"{j.label}: command failed ({e})", i)

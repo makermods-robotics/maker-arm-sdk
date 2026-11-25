@@ -38,6 +38,11 @@
   0.3 rad/s, or, where its firmware cannot report torque state, without `torque_off_confirmed=True` (the CLI's
   confirmation gives it). Refused when the new ID answers, or when a joint's motor would take another joint's ID; afterwards
   the motor must answer on the new ID and nothing on the old one.
+- `stop()` ends on the support: near the supported rest pose (profile `rest_window_deg`; the Maker profile sets
+  12) the weight-carrying joints are pressed up to 3 deg toward it rather than returned to where the enable found
+  them, then their gains and gravity feed-forward ramp to zero over 0.5 s before torque off, which happens only if
+  the arm stayed within 4 deg and fresh readings show it still. A return that stops a little short no longer
+  becomes the next session's rest pose.
 - `gravity --check` gives the gravity model the chain's joints only, so it compares the measured holding torque
   with the model on an arm with a gripper.
 

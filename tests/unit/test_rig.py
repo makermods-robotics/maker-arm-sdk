@@ -247,5 +247,6 @@ def test_group_close_reports_an_unconfirmed_release(monkeypatch):
     group.enable()
     motors["a2"].online = False
     monkeypatch.setattr(arms["a"], "_return_to_rest", lambda rest=None: True)
+    monkeypatch.setattr(arms["a"], "_settle_onto_support", lambda token: True)
     assert group.close() == {"a": "unknown", "b": "released"}
     assert ArmGroup(arms).close() == {"a": "unknown", "b": "unknown"}   # never connected: nothing confirmed

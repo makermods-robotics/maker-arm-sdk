@@ -1,7 +1,9 @@
 """Arm behaviour that depends on RobStride specifics: parameter-capable firmware, mode bits,
 RUN_MODE, the CAN-timeout watchdog and the separate fault poll."""
 
+import math
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -212,3 +214,165 @@ def test_set_motor_id_reads_the_motor_before_writing():
     with pytest.raises(StateError, match="torque on"):
         arm.set_motor_id(1, 9, torque_off_confirmed=True)
     assert id_writes(bus) == [] and motors[1].motor_id == 1
+
+
+# ── settling onto the support before torque off ──
+class SupportedMotor(FakeMotor):
+    """A loaded joint (gravity pulls toward lower angles) that lies on a support at ``support`` rad. Holding at a
+    command it sags by load/kp; coming down it stops up to ``lag`` rad short (on the lifted side), as a real joint's
+    friction leaves it; released, it stays where it is (static friction) unless nothing holds it up."""
+
+    def __init__(self, motor_id, position, load=0.3, support=0.3, lag=0.03, **kw):
+        super().__init__(motor_id, position=position, **kw)
+        self.load, self.support, self.lag = load, support, lag
+        self.track = False                       # the position is this model's, not the command's
+
+    def handle(self, can_id, data):
+        before = len(self.frames)
+        replies = super().handle(can_id, data)
+        if len(self.frames) > before and self.enabled:
+            cmd, kp, tau = self.frames[-1]
+            free = cmd - (self.load - tau) / kp if kp > 1e-6 else -1e9
+            x = self.position if len(self.frames) > 1 else free
+            prev = getattr(self, "_x", self.position)
+            if free < prev - self.lag:
+                prev = free + self.lag          # coming down: stops up to lag above where it is pulled
+            elif free > prev:
+                prev = free
+            self._x = max(self.support, prev)
+            self.position = self._x
+        return replies
+
+
+def supported_arm(position, support=0.3, lag=0.03, **overrides):
+    joint = SupportedMotor(1, position, support=support, lag=lag)
+    arm, bus, fakes = make_arm([joint, FakeMotor(2, position=-0.5)],
+                               **{"rest_speed": 6.0, "rest_rate_hz": 200, "rest_timeout": 2.0, **overrides})
+    return arm, bus, fakes
+
+
+def run_cycle(arm, up=0.8):
+    arm.connect()
+    arm.enable()
+    arm._synced = [True, True]
+    q = arm.get_commanded_positions()
+    assert arm.move_to([up, q[1]], timeout=3.0)
+    released = arm.stop()
+    arm.disconnect()
+    return released
+
+
+HOVER_DEG = [0.0, -15.0, 22.0, 0.0, 0.0, 0.0]
+
+
+def shoulder_on_its_support(sim, support_deg=-4.5, lag_deg=1.0):
+    """The simulated shoulder_lift as the real one behaves at rest: it cannot go past its support (``support_deg``,
+    short of the profile's clipped rest pose), coming back toward it under power it stops up to ``lag_deg`` short,
+    and released it stays where it is (static friction near its balance point)."""
+    motor = sim.motor("shoulder_lift")
+    motor.track = False                          # the position is this model's, not the command's
+    support, lag = math.radians(support_deg), math.radians(lag_deg)
+    handle, state = motor.handle, {"q": motor.position}
+
+    def supported(can_id, data):
+        before = len(motor.frames)
+        replies = handle(can_id, data)
+        if len(motor.frames) > before:
+            cmd, kp, _ = motor.frames[-1]
+            q = state["q"]
+            if motor.enabled and kp >= 1.0:
+                q = max(q, cmd - lag) if cmd >= q else cmd
+                q = min(q, support)
+            state["q"] = motor.position = q
+        return replies
+
+    motor.handle = supported
+
+
+def maker_cycle(config, backend):
+    """One process's session: enable at rest, go to hover, stop(); returns the resting shoulder_lift, deg."""
+    arm = Arm(config, backend)
+    arm._busy_wait_us = lambda us: None
+    arm.connect()
+    arm.enable()
+    try:
+        q = arm.get_joint_positions()
+        assert arm.move_to([math.radians(v) for v in HOVER_DEG] + q[6:], timeout=5.0)
+        assert arm.stop() is True
+    finally:
+        if arm.state is not ArmState.DISCONNECTED:
+            arm.disable()
+            arm.disconnect()
+    arm.connect()
+    lift = math.degrees(arm.get_joint_positions()[1])
+    arm.disconnect()
+    return lift
+
+
+def test_enable_and_rest_cycles_in_separate_processes_keep_the_arm_on_its_support():
+    from maker_arm import testing
+    rest = [0.0, math.radians(-4.5), math.radians(10.0), math.radians(-1.2), 0.0, 0.0, math.radians(-3.0)]
+    config = testing.simulation_timing(testing._config(None))
+    config = replace(config, rest_speed=math.radians(120), rest_rate_hz=200)
+    backend, sim = testing.simulated_backend(config, rest)
+    shoulder_on_its_support(sim)
+    lifts = [maker_cycle(sim.config, backend) for _ in range(8)]
+    assert all(abs(v - (-4.5)) < 0.5 for v in lifts), lifts    # every session ends on the support
+
+
+def test_an_arm_enabled_away_from_rest_returns_where_it_started():
+    from maker_arm import testing
+    arm, sim = testing.simulated_arm(positions=[math.radians(v) for v in HOVER_DEG] + [math.radians(-3.0)])
+    arm.connect()
+    arm.enable()
+    try:
+        assert arm.rest_pose[:6] == pytest.approx([math.radians(v) for v in HOVER_DEG], abs=1e-3)
+    finally:
+        arm.disable()
+        arm.disconnect()
+
+
+def test_an_arm_that_is_not_supported_where_it_started_keeps_holding():
+    arm, _, fakes = supported_arm(0.8, support=-1.9)            # enabled in the air (another program held it)
+    arm.connect()
+    arm.enable()
+    try:
+        assert arm.stop() is False                                # the settle saw it sink and stiffened again
+        assert arm.state is ArmState.ENABLED and fakes[1].enabled
+        # it stiffened again after a few degrees (4 deg plus this model's friction steps and the check interval);
+        # unsupported and released, it would have fallen to -1.9 rad
+        assert fakes[1].position > 0.8 - math.radians(10.0)
+        assert arm._gain_scale is None
+    finally:
+        arm.disable()
+        arm.disconnect()
+
+
+def test_a_loop_that_stalls_during_the_settle_keeps_the_arm_holding(monkeypatch):
+    arm, _, fakes = supported_arm(0.33)
+    arm.connect()
+    arm.enable()
+    tick = arm._tick
+    stalled = {"on": False}
+
+    def maybe(dt, session=None):
+        if stalled["on"]:
+            time.sleep(0.01)
+            return None
+        return tick(dt, session)
+
+    monkeypatch.setattr(arm, "_tick", maybe)
+    settle = arm._settle_onto_support
+
+    def stall_then_settle(*a, **k):
+        stalled["on"] = True
+        return settle(*a, **k)
+
+    monkeypatch.setattr(arm, "_settle_onto_support", stall_then_settle)
+    try:
+        assert arm.stop() is False
+        assert arm.state is ArmState.ENABLED
+    finally:
+        stalled["on"] = False
+        arm.disable()
+        arm.disconnect()
