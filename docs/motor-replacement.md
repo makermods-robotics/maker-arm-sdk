@@ -5,7 +5,7 @@
 3. Factory preparation of the replacement (done once, before it joins the arm):
    - switch it from the private protocol to MIT with
      `python tools/engineering/switch_protocol.py --ids ID --to mit`, then power-cycle, and
-   - set its CAN ID to the joint's ID (1–7) with `maker-arm set-id --from OLD --to ID` while it is the
+   - set its CAN ID to the joint's ID (1–7) with `maker-arm set-id --from OLD --to ID --replacing JOINT` while it is the
      only motor on the bus answering on OLD (or with RobStride's Motor Studio).
    The SDK only speaks MIT, so a motor still on the private protocol never answers `scan`.
 4. Install the linkage and put the arm in the zero pose (folded against the base, gripper fully

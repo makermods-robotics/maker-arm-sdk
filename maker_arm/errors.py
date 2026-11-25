@@ -17,5 +17,9 @@ class StateError(ArmError):
     pass
 
 
+class RouteUnverified(StateError):
+    """After an id change it is unclear which motor answers on a joint's id (both ids answer)."""
+
+
 class FaultLatched(ArmError):
     """A command that would clear fault evidence was refused because a fault is latched."""

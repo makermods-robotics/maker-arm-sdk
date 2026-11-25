@@ -273,11 +273,23 @@ def test_set_motor_id_refuses_an_id_already_on_the_bus_and_cleans_up():
 def test_set_motor_id_gives_a_motor_the_profile_lacks_the_id_of_a_joint_without_its_motor():
     # Motor replacement, or a motor moved off its joint's id and back: the joint's own id is free on the bus.
     arm, bus, fakes = make_arm([FakeMotor(9, position=0.3), FakeMotor(2, position=-0.5)])
-    arm.set_motor_id(9, 1, torque_off_confirmed=True)
+    arm.set_motor_id(9, 1, torque_off_confirmed=True, replacing="j1")
     assert not bus.is_open and arm.config.joints[0].motor_id == 1
     arm.connect()
     assert arm.refresh() == [True, True]
     arm.disconnect()
+
+
+def test_set_motor_id_gives_a_joints_id_only_to_the_motor_named_as_its_replacement():
+    # Across two calls a joint's motor moved to a spare id looks like a stranger; it must not take another joint's id.
+    arm, bus, fakes = make_arm([FakeMotor(9, position=0.3), FakeMotor(1, position=0.3)])   # the gripper (2) is off
+    with pytest.raises(ArmError, match="replacing"):
+        arm.set_motor_id(9, 2, torque_off_confirmed=True)
+    assert not bus.is_open and fakes[9].motor_id == 9
+    with pytest.raises(ArmError, match="replacing"):
+        arm.set_motor_id(9, 2, torque_off_confirmed=True, replacing="j1")   # named, but not the joint with id 2
+    arm.set_motor_id(9, 2, torque_off_confirmed=True, replacing="gripper")
+    assert arm.config.joints[1].motor_id == 2
 
 
 def test_set_motor_id_refuses_an_id_another_joint_has_before_opening_the_bus():

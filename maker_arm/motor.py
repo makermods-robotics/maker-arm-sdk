@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, NamedTuple, Optional, Union
 
 from . import protocol
-from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout, StateError
+from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout, RouteUnverified, StateError
 from .transport.base import CanBackend
 
 if TYPE_CHECKING:
@@ -374,7 +374,7 @@ class Motor:
                 self.motor_id = new_id
                 return
             if on_new:
-                raise StateError(f"{label}: ID {old_id} and ID {new_id} both answer after the id write: another "
+                raise RouteUnverified(f"{label}: ID {old_id} and ID {new_id} both answer after the id write: another "
                                  "motor answers on one of them; the joint keeps its old id. Power-cycle and scan")
             if on_old:
                 raise StateError(f"{label}: the motor still answers on ID {old_id}; if the change was taken it "

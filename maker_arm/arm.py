@@ -18,7 +18,7 @@ import numpy as np
 from . import _planner, gravity, kinematics, realtime, trajectory_ik
 from ._product import CLI_NAME
 from .config import ArmConfig, JointConfig, check_gains
-from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout, StateError
+from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout, RouteUnverified, StateError
 from .gripper import GripperHold
 from .motor import ID_RANGE, Motor, route
 from .transport.base import CanBackend, create_backend
@@ -111,6 +111,7 @@ class Arm:
         self._motion = 0
         self._gain_scale: Optional[list[float]] = None   # per joint, kp and gravity feed-forward (stop()'s settle)
         self._rest_token: Optional[int] = None
+        self._unverified: dict[int, str] = {}   # joint index -> why its id no longer surely reaches its motor
         self._released: set[int] = set()      # disabled after a fault (release_on_fault)
         self._faulted: set[int] = set()       # frozen at the fault pose
         self._watchdog_restore: dict[int, object] = {}
@@ -399,6 +400,7 @@ class Arm:
                                        "clear_faults() before enabling")
             # Fresh fault status and position from every motor; cached values never authorize torque.
             self._check_motors()
+            self._refuse_unverified_routes()
             # A motor already holding (another session, `--then stay`) would lose its torque to the
             # neutral preload, and a failed enable releases every motor: refuse before any frame.
             holding = [f"{m.motor_id} ({j.label})" for m, j in zip(self.motors, self.config.joints)
@@ -473,6 +475,7 @@ class Arm:
                     raise ConnectError(f"motor {m.motor_id} has a latched fault ({m.fault_latched}); "
                                        "refusing to attach")
             self._check_motors()
+            self._refuse_unverified_routes()
             torque = [m.feedback.enabled for m in self.motors]
             if not any(t is not False for t in torque):
                 raise ConnectError("no motor reports torque on: nothing to attach to; use enable()")
@@ -838,12 +841,15 @@ class Arm:
                 self._wrap[i] = 0.0
                 time.sleep(0.01)
 
-    def set_motor_id(self, old: int, new: int, timeout: float = 0.5, torque_off_confirmed: bool = False) -> None:
+    def set_motor_id(self, old: int, new: int, timeout: float = 0.5, torque_off_confirmed: bool = False,
+                     replacing: Optional[str] = None) -> None:
         """Persistently change a motor's CAN ID from ``old`` to ``new`` while torque is off.
 
         Works connected or disconnected (the bus is opened for the call). Refuses if ``new``
-        already answers, or if ``old`` is a joint's motor and ``new`` belongs to another joint of the profile (even
-        one that is offline). The motor is
+        already answers, or if it belongs to a joint of the profile (even one that is offline) unless ``replacing``
+        names that joint and ``old`` is no joint's id: a motor replacing a joint, or one moved off its joint's id and
+        back. If afterwards both ids answer, the joint that had ``old`` is marked unverified and enable()/attach()
+        refuse this Arm (scan the bus, fix the profile, build a new Arm). The motor is
         read before the write and refused if it reports torque on, holds torque or moves; where its firmware
         cannot report torque state, ``torque_off_confirmed`` says the caller made sure it is de-energized
         (Motor.set_id). A configured joint that had ``old`` is routed to ``new`` from then on
@@ -862,8 +868,10 @@ class Arm:
             # profile does not have (a replacement, or one moved off its joint's id) may take a joint's id when
             # nothing answers there.
             other = next((j for j in self.config.joints if j.motor_id == new), None)
-            if other is not None and any(j.motor_id == old for j in self.config.joints):
-                raise ArmError(f"motor ID {new} belongs to {other.label} in the profile; pick a free id")
+            if other is not None and (any(j.motor_id == old for j in self.config.joints) or replacing != other.name):
+                raise ArmError(f"motor ID {new} belongs to {other.label} in the profile; pick a free id, or, for a "
+                               f"motor that is not in the profile and replaces it, name the joint "
+                               f"(replacing={other.name!r}; set-id --replacing {other.name})")
             joint = next((j for j in self.config.joints if j.motor_id == old), None) or JointConfig(
                 motor_id=old, lo=-math.pi, hi=math.pi, kp=0.0, kd=0.0)
             target = Motor(joint, self._backend, self.config.host_id)
@@ -888,12 +896,24 @@ class Arm:
                     taken = False
                 if taken:
                     raise ArmError(f"motor ID {new} already answers on the bus")
-                target.set_id(new, timeout, torque_off_confirmed=torque_off_confirmed)
+                try:
+                    target.set_id(new, timeout, torque_off_confirmed=torque_off_confirmed)
+                except RouteUnverified as e:
+                    index = next((i for i, j in enumerate(self.config.joints) if j.motor_id == old), None)
+                    if index is not None:
+                        self._unverified[index] = str(e)
+                    raise
                 self._rekey(old, new, target)
             finally:
                 if opened:
                     self._backend.close()
                 self._backend.set_recv_callback(self._on_frame)
+
+    def _refuse_unverified_routes(self) -> None:
+        if self._unverified:
+            names = ", ".join(self.config.joints[i].label for i in sorted(self._unverified))
+            raise ConnectError(f"{names}: id unverified after a set-id that left both ids answering; scan the bus, "
+                               "fix the profile, and use a new Arm")
 
     def _rekey(self, old: int, new: int, changed: Motor) -> None:
         """After an id change, route the joint that had ``old`` to its motor at ``new``."""

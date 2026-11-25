@@ -220,10 +220,13 @@ def test_zero_one_motor(bench):
 def test_set_id_goes_through_the_arm_and_reports_its_error(bench, monkeypatch):
     bench.add_arm()
     calls = []
-    monkeypatch.setattr(sdk.arm.Arm, "set_motor_id", lambda self, old, new, timeout=0.5, torque_off_confirmed=False:
-                        calls.append((old, new, torque_off_confirmed)))
+    monkeypatch.setattr(sdk.arm.Arm, "set_motor_id",
+                        lambda self, old, new, timeout=0.5, torque_off_confirmed=False, replacing=None:
+                        calls.append((old, new, torque_off_confirmed, replacing)))
     doc = bench.json("set-id", "--from", "7", "--to", "9", "--yes")
-    assert calls == [(7, 9, True)] and doc["to"] == 9
+    assert calls == [(7, 9, True, None)] and doc["to"] == 9
+    bench.json("set-id", "--from", "9", "--to", "7", "--replacing", "gripper", "--yes")
+    assert calls[-1] == (9, 7, True, "gripper")
     assert "must differ" in bench.json("set-id", "--from", "7", "--to", "7", "--yes", code=1)["error"]
     monkeypatch.setattr(sdk.arm.Arm, "set_motor_id",
                         lambda self, old, new, timeout=0.5, **kw: (_ for _ in ()).throw(sdk.errors.ArmError("unsupported")))

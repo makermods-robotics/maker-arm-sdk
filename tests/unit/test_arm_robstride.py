@@ -376,3 +376,24 @@ def test_a_loop_that_stalls_during_the_settle_keeps_the_arm_holding(monkeypatch)
         stalled["on"] = False
         arm.disable()
         arm.disconnect()
+
+
+def test_a_set_id_that_leaves_both_ids_answering_keeps_the_joint_from_enabling():
+    source, occupant = FakeMotor(1, position=0.3), FakeMotor(9, online=False)
+    source.apply_id_change = False                               # the write is ignored ...
+    original = source.handle
+
+    def wake_occupant(can_id, data):                             # ... and a motor on 9, silent before, answers after
+        if bytes(data)[:6] == bytes([0xFF] * 6) and bytes(data)[7] == 0xFA:
+            occupant.online = True
+        return original(can_id, data)
+
+    source.handle = wake_occupant
+    arm, bus, _ = make_arm([source, FakeMotor(2, position=-0.5), occupant])
+    with pytest.raises(StateError, match="both answer"):
+        arm.set_motor_id(1, 9, torque_off_confirmed=True)
+    arm.connect()
+    with pytest.raises(ConnectError, match="unverified"):
+        arm.enable()
+    assert not source.enabled
+    arm.disconnect()

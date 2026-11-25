@@ -37,7 +37,9 @@
   is read first and refused when it reports a fault or torque on, reads more than 0.03 N*m or moves faster than
   0.3 rad/s, or, where its firmware cannot report torque state, without `torque_off_confirmed=True` (the CLI's
   confirmation gives it). Refused when the new ID answers, or when a joint's motor would take another joint's ID; afterwards
-  the motor must answer on the new ID and nothing on the old one.
+  the motor must answer on the new ID and nothing on the old one. A joint's ID goes only to a motor not in the
+  profile and only when `replacing` (`--replacing JOINT`) names that joint; if both IDs answer afterwards, that
+  Arm refuses to enable or attach until the bus is checked and a new Arm is made.
 - `stop()` ends on the support: near the supported rest pose (profile `rest_window_deg`; the Maker profile sets
   12) the weight-carrying joints are pressed up to 3 deg toward it rather than returned to where the enable found
   them, then their gains and gravity feed-forward ramp to zero over 0.5 s before torque off, which happens only if
