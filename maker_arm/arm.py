@@ -1005,17 +1005,19 @@ class Arm:
         is (holding the measured pose) and returns False. ArmError without a URDF.
         """
         chain = self.chain
-        if self._state is not ArmState.ENABLED:
-            log.warning("move_ee rejected: state=%s", self._state.name)
-            return False
         target = [float(v) for v in xyz]
         if len(target) != 3 or (rpy is not None and len(rpy) != 3):
             raise ValueError("xyz (and rpy) need three values")
         if speed is not None and not (math.isfinite(speed) and speed > 0):
             raise ValueError("speed must be positive")
+        # Admission and ownership together, before any setup: a move_ee that pauses here cannot claim a session
+        # that an e-stop and a new enable started after it was called.
+        token = self._claim_motion()
+        if token is None:
+            log.warning("move_ee rejected: state=%s returning=%s", self._state.name, self._returning)
+            return False
         cfg = self.config
         ik = trajectory_ik.TrajectoryIK.from_config(cfg, chain=chain)
-        token = self._take_motion()
         stopped = _MotionStop(self, token, cancel)
         current = self.get_commanded_positions()
         q0 = np.asarray(current[:chain.n], dtype=float)
@@ -1053,8 +1055,7 @@ class Arm:
         due = time.monotonic()
         for row in rows:
             if cancel is not None and cancel.is_set():
-                if self._motion == token:
-                    self.hold_current_position()
+                self._hold_if_owner(token)
                 return False
             if deadline is not None and time.monotonic() > deadline:
                 return False
@@ -1131,8 +1132,7 @@ class Arm:
             if self._state is not ArmState.ENABLED or not self._running:
                 return False
             if cancel is not None and cancel.is_set():
-                if self._motion == token:
-                    self.hold_current_position()
+                self._hold_if_owner(token)
                 return False
             with self._target_lock:
                 if self._motion != token or self._user_targets != q:
@@ -1151,10 +1151,17 @@ class Arm:
 
     def hold_current_position(self) -> bool:
         """Freeze the arm at its latest measured pose without releasing torque."""
+        return self._hold_if_owner(None)
+
+    def _hold_if_owner(self, token: Optional[int]) -> bool:
+        """hold_current_position(); with ``token``, only while that motion still owns the targets (checked under the
+        lock the hold commits with, so a newer command is never overwritten)."""
         if self._state not in (ArmState.ENABLED, ArmState.FAULT):
             return False
         positions = self.get_joint_positions()
         with self._target_lock:
+            if token is not None and token != self._motion:
+                return False
             self._motion += 1
             for i, p in enumerate(positions):
                 if math.isfinite(p):
@@ -1577,6 +1584,14 @@ class Arm:
     def _take_motion(self) -> int:
         """Start a new motion, superseding any in flight; returns its token."""
         with self._target_lock:
+            self._motion += 1
+            return self._motion
+
+    def _claim_motion(self) -> Optional[int]:
+        """_take_motion() if the arm takes targets now (ENABLED, not returning to rest), else None."""
+        with self._target_lock:
+            if self._state is not ArmState.ENABLED or self._returning:
+                return None
             self._motion += 1
             return self._motion
 

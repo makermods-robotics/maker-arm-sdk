@@ -324,6 +324,36 @@ def test_a_stalled_loop_does_not_release_on_a_reading_from_before_the_stall(monk
         arm.disconnect()
 
 
+def test_a_return_to_rest_overtaken_by_estop_and_enable_writes_nothing_into_the_new_session():
+    arm, _, _ = make(rest_speed=math.radians(20), rest_rate_hz=200, rest_timeout=3.0)
+    arm.connect()
+    arm.enable()
+    try:
+        arm._synced = [True, True]
+        assert arm.move_to([1.2, -0.5], timeout=3.0)
+        active, calls, held = arm._rest_active, [], []
+
+        def overtaken_between_check_and_write():
+            # the returning thread pauses right after its check; an e-stop and a new enable happen meanwhile
+            calls.append(1)
+            if len(calls) == 10:
+                arm.estop()
+                arm.enable()
+                held.append(arm.get_commanded_positions())
+            return active()
+        arm._rest_active = overtaken_between_check_and_write
+        arm.return_to_rest()
+        arm._rest_active = active
+        assert held
+        time.sleep(0.1)
+        with arm._target_lock:
+            assert arm._user_targets == pytest.approx(held[0], abs=1e-6)
+            assert not arm._returning
+    finally:
+        arm.disable()
+        arm.disconnect()
+
+
 # ── regressions from the independent review ──
 def test_second_fault_while_holding_is_still_handled():
     arm, _, fakes = enabled_arm()
