@@ -411,7 +411,8 @@ def test_enable_refuses_a_legacy_arm_that_is_producing_holding_torque_and_sends_
                                                                     "wrist_flex": 1.5})
     arm.connect()
     assert all(m.feedback.enabled is None for m in arm.motors)   # torque state not reported
-    with pytest.raises(ConnectError, match="rest"):
+    from maker_arm import HeldByAnotherProgram
+    with pytest.raises(HeldByAnotherProgram, match="producing torque.*rest"):
         arm.enable()
     assert arm.state is ArmState.CONNECTED
     assert all(not m.frames and "enable" not in m.log for m in sim.motors.values())   # no preload, no enable

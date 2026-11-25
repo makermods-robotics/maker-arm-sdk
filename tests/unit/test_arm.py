@@ -103,8 +103,9 @@ def test_enable_refuses_motors_that_already_hold_without_sending_them_anything()
                           FakeMotor(2, position=-0.5, params_supported=True)])
     arm.connect()
     marks = {k: len(f.log) for k, f in fakes.items()}
-    with pytest.raises(ConnectError, match=r"motors 1 \(j1\) already have torque on.*release"):
+    with pytest.raises(sdk.HeldByAnotherProgram, match=r"motors 1 \(j1\) already have torque on.*release") as refused:
         arm.enable(start_loop=False)
+    assert isinstance(refused.value, ConnectError) and sdk.HeldByAnotherProgram is sdk.errors.HeldByAnotherProgram
     assert fakes[1].enabled and arm.state is ArmState.CONNECTED
     assert all(sent_torque_frames(f, marks[k]) == [] for k, f in fakes.items())   # no preload anywhere
 

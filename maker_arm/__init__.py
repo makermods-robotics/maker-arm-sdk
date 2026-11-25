@@ -10,7 +10,7 @@ from ._product import DIST_NAME
 from .arm import Arm, ArmState
 from .cameras import Camera, list_cameras
 from .config import ArmConfig, JointConfig
-from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout, StateError
+from .errors import ArmError, ConnectError, FaultLatched, HeldByAnotherProgram, ParamTimeout, StateError
 from .kinematics import Chain
 from .teleop import Teleop
 
@@ -19,4 +19,4 @@ try:
 except PackageNotFoundError:
     __version__ = "0.1.0"
 __all__ = ["Arm", "ArmState", "ArmConfig", "JointConfig", "Chain", "Teleop", "Camera", "list_cameras",
-           "ArmError", "ConnectError", "FaultLatched", "ParamTimeout", "StateError"]
+           "ArmError", "ConnectError", "FaultLatched", "HeldByAnotherProgram", "ParamTimeout", "StateError"]

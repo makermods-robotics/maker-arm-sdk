@@ -9,6 +9,11 @@ class ConnectError(ArmError):
     pass
 
 
+class HeldByAnotherProgram(ConnectError):
+    """enable() refused: the motors are energized, held by another program (take the arm over with attach(), or
+    bring it down with the CLI's `rest`)."""
+
+
 class ParamTimeout(ArmError):
     pass
 

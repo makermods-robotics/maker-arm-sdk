@@ -18,7 +18,8 @@ import numpy as np
 from . import _planner, gravity, kinematics, realtime, trajectory_ik
 from ._product import CLI_NAME
 from .config import ArmConfig, JointConfig, check_gains
-from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout, RouteUnverified, StateError
+from .errors import (ArmError, ConnectError, FaultLatched, HeldByAnotherProgram, ParamTimeout, RouteUnverified,
+                     StateError)
 from .gripper import GripperHold
 from .motor import ID_RANGE, Motor, route
 from .transport.base import CanBackend, create_backend
@@ -405,9 +406,9 @@ class Arm:
             holding = [f"{m.motor_id} ({j.label})" for m, j in zip(self.motors, self.config.joints)
                        if m.feedback is not None and m.feedback.enabled]
             if holding:
-                raise ConnectError(f"motors {', '.join(holding)} already have torque on; nothing was sent to "
-                                   f"them. Take the arm over with attach() ('{CLI_NAME} rest' brings it down "
-                                   "and releases it)")
+                raise HeldByAnotherProgram(f"motors {', '.join(holding)} already have torque on; nothing was sent "
+                                           f"to them. Take the arm over with attach() ('{CLI_NAME} rest' brings it "
+                                           "down and releases it)")
             # Old firmware reports no torque state, but a motor that is producing torque is energized: another
             # program holds the arm, and the neutral preload below would let it fall.
             loaded = [f"{m.motor_id} ({j.label}: {m.feedback.torque:+.2f} N*m)"
@@ -415,10 +416,10 @@ class Arm:
                       if m.feedback is not None and m.feedback.enabled is None
                       and abs(m.feedback.torque) > HELD_TORQUE_NM]
             if loaded:
-                raise ConnectError(f"motors {', '.join(loaded)} are producing torque, and their firmware does not "
-                                   "report torque state: another program is probably holding the arm. Nothing was "
-                                   f"sent to them. Take the arm over with attach() ('{CLI_NAME} rest' brings it "
-                                   "down and releases it)")
+                raise HeldByAnotherProgram(
+                    f"motors {', '.join(loaded)} are producing torque, and their firmware does not report torque "
+                    "state: another program is probably holding the arm. Nothing was sent to them. Take the arm over "
+                    f"with attach() ('{CLI_NAME} rest' brings it down and releases it)")
             pos = self.get_joint_positions()
             self._check_start(pos, range(self.config.n_joints))
             self._gravity = self._make_gravity()

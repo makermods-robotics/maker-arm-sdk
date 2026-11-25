@@ -7,8 +7,8 @@ from conftest import sdk
 def test_import():
     assert sdk.__version__ == "0.1.0"
     assert set(sdk.__all__) == {"Arm", "ArmState", "ArmConfig", "JointConfig", "Chain", "Teleop", "Camera",
-                                "list_cameras", "ArmError", "ConnectError", "FaultLatched", "ParamTimeout",
-                                "StateError"}
+                                "list_cameras", "ArmError", "ConnectError", "FaultLatched", "HeldByAnotherProgram",
+                                "ParamTimeout", "StateError"}
     assert all(hasattr(sdk, name) for name in sdk.__all__)
 
 
