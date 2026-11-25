@@ -43,6 +43,11 @@
   them, then their gains and gravity feed-forward ramp to zero over 0.5 s before torque off, which happens only if
   the arm stayed within 4 deg and fresh readings show it still. A return that stops a little short no longer
   becomes the next session's rest pose.
+- Maker URDF: `link_003`'s centre of mass is 48 mm from the shoulder axis (was 134 mm), fitted to holding torques
+  measured on the arm at 16 low poses (`tests/unit/gravity_measured.json`): the shoulder_lift residual falls from
+  0.58 to 0.15 N*m RMS (static friction there is about 0.06), elbow_flex and wrist_flex are unchanged. Over that
+  range a constant counter-torque on the shoulder fits as well; the change moves the shoulder term by at most
+  0.59 N*m anywhere in the workspace.
 - `gravity --check` gives the gravity model the chain's joints only, so it compares the measured holding torque
   with the model on an arm with a gripper.
 
