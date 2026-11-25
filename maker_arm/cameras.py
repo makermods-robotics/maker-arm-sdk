@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -39,6 +40,9 @@ V4L_BY_PATH = Path("/dev/v4l/by-path")
 READ_FAILURE_S = 1.0   # a failed read is not a dead camera; this long without a frame is
 REOPEN_S = 1.0         # wait before reopening a dead camera
 URL_TIMEOUT_S = 5.0    # url: cameras, connect and read timeout
+MAX_LINE_BYTES = 8192            # url: cameras, longest header or boundary line
+MAX_HEADERS = 64                 # url: cameras, most header lines in one part
+MAX_FRAME_BYTES = 8 * 1024 * 1024   # url: cameras, largest JPEG taken
 URL_READ_WAIT_S = 0.1  # url: cameras, how long one read() waits for a new JPEG
 URL_SCHEMES = ("http://", "https://")
 _OPEN_LOCK = threading.Lock()  # AVFoundation can fail cameras opened at the same moment
@@ -188,6 +192,7 @@ class _HttpCapture:
         self._closed = False
         self._alive = True
         self._resp = self._connect()
+        self._sock = _socket_of(self._resp)
         self._multipart = self._resp.headers.get_content_type().startswith("multipart/")
         self._thread = threading.Thread(target=self._receive, daemon=True, name=f"camera-http-{url}")
         self._thread.start()
@@ -229,45 +234,58 @@ class _HttpCapture:
             if not self._closed:
                 self.error = f"camera url:{self.url}: {e or type(e).__name__}"
         finally:
+            try:
+                self._resp.close()   # the reader owns the response: release() only interrupts its socket
+            except Exception:
+                pass
             with self._cond:
                 self._alive = False
                 self._cond.notify_all()
 
     def _receive_parts(self, resp) -> None:
-        """multipart/x-mixed-replace: each part is headers, a blank line and one JPEG."""
-        line = resp.readline()
+        """multipart/x-mixed-replace: each part is headers, a blank line and one JPEG. Lines, headers and frames are
+        bounded (MAX_LINE_BYTES, MAX_HEADERS, MAX_FRAME_BYTES): a stream past a bound fails and is reopened."""
+        line = _line(resp)
         while not self._closed:
             if not line:
                 raise EOFError("the stream ended")
             if not line.startswith(b"--"):
-                line = resp.readline()   # preamble, or the blank line after a part
+                line = _line(resp)   # preamble, or the blank line after a part
                 continue
             boundary = line.strip()   # a closing boundary ("--frame--") is followed by the end of the stream
             headers = {}
             while True:
-                h = resp.readline()
+                h = _line(resp)
                 if not h:
                     raise EOFError("the stream ended inside a part")
                 h = h.strip()
                 if not h:
                     break
+                if len(headers) >= MAX_HEADERS:
+                    raise ValueError(f"a part with more than {MAX_HEADERS} header lines")
                 name, _, value = h.partition(b":")
                 headers[name.strip().lower().decode("latin-1")] = value.strip().decode("latin-1")
             length = headers.get("content-length")
             if length is not None and length.isdigit():
+                if int(length) > MAX_FRAME_BYTES:
+                    raise ValueError(f"a frame of {int(length)} bytes, larger than {MAX_FRAME_BYTES}")
                 jpeg = resp.read(int(length))
                 if len(jpeg) < int(length):
                     raise EOFError("the stream ended inside a frame")
-                line = resp.readline()
+                line = _line(resp)
             else:
-                # No length: the JPEG runs up to the next boundary line.
-                chunks = []
+                # No length: the JPEG runs up to the next boundary line (one that starts a line).
+                chunks, size, at_line_start = [], 0, True
                 while True:
-                    line = resp.readline()
+                    line = resp.readline(65536)
                     if not line:
                         raise EOFError("the stream ended inside a frame")
-                    if line.strip() == boundary or line.startswith(boundary + b"--"):
+                    if at_line_start and (line.strip() == boundary or line.startswith(boundary + b"--")):
                         break
+                    at_line_start = line.endswith(b"\n")
+                    size += len(line)
+                    if size > MAX_FRAME_BYTES:
+                        raise ValueError(f"a frame larger than {MAX_FRAME_BYTES} bytes")
                     chunks.append(line)
                 jpeg = b"".join(chunks)
                 if jpeg.endswith(b"\r\n"):
@@ -281,8 +299,10 @@ class _HttpCapture:
         while not self._closed:
             started = time.monotonic()
             headers = {k.lower(): v for k, v in resp.headers.items()}
-            jpeg = resp.read()
+            jpeg = resp.read(MAX_FRAME_BYTES + 1)
             resp.close()
+            if len(jpeg) > MAX_FRAME_BYTES:
+                raise ValueError(f"a frame larger than {MAX_FRAME_BYTES} bytes")
             if jpeg[:2] == b"\xff\xd8":
                 self._store(jpeg, headers)
             wait = self.poll_period - (time.monotonic() - started)
@@ -291,7 +311,9 @@ class _HttpCapture:
             if self._closed:
                 return
             resp = self._connect()
-            self._resp = resp
+            self._resp, self._sock = resp, _socket_of(resp)
+            if self._closed:
+                return
 
     def read(self):
         """(True, image) for a JPEG newer than the last one returned, else (False, None) within URL_READ_WAIT_S."""
@@ -309,11 +331,32 @@ class _HttpCapture:
         return True, image
 
     def release(self) -> None:
+        """Stop the receive thread and wait for it. Its socket is shut down rather than its response closed from
+        here: a close would wait for the reader's buffer lock, which a server sending a byte at a time keeps."""
         self._closed = True
-        try:
-            self._resp.close()
-        except Exception:
-            pass
+        sock = self._sock
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        self._thread.join(self.timeout)
+
+
+def _socket_of(resp) -> Optional[socket.socket]:
+    """The socket under an urllib response, or None."""
+    try:
+        return resp.fp.raw._sock
+    except AttributeError:
+        return None
+
+
+def _line(resp) -> bytes:
+    """One line of at most MAX_LINE_BYTES."""
+    line = resp.readline(MAX_LINE_BYTES + 1)
+    if len(line) > MAX_LINE_BYTES:
+        raise ValueError(f"a header line longer than {MAX_LINE_BYTES} bytes")
+    return line
 
 
 # ── capture ──

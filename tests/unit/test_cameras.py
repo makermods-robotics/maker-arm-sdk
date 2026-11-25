@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -294,6 +295,42 @@ def test_url_that_is_not_a_camera_fails_open(mjpeg):
         cameras.Camera(f"url:{server.base}/text").open()
     with pytest.raises(OSError, match="cannot open"):
         cameras.Camera("url:http://127.0.0.1:9/none.mjpg").open()
+
+
+@pytest.mark.parametrize("path", ["/stream.mjpg", "/nolength.mjpg", "/latest.jpg"])
+def test_url_camera_drops_a_frame_larger_than_the_limit(mjpeg, monkeypatch, path):
+    monkeypatch.setattr(cameras, "MAX_FRAME_BYTES", 200)   # the test frames are larger
+    server = mjpeg(fps=50.0)
+    capture = cameras._HttpCapture(f"{server.base}{path}")
+    try:
+        deadline = time.monotonic() + 2.0
+        while capture._alive and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not capture._alive and capture.received == 0 and "larger than" in capture.error
+    finally:
+        capture.release()
+
+
+def test_url_camera_stops_on_a_header_line_longer_than_the_limit(mjpeg):
+    server = mjpeg()
+    capture = cameras._HttpCapture(f"{server.base}/longline.mjpg")
+    try:
+        deadline = time.monotonic() + 2.0
+        while capture._alive and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not capture._alive and "longer than" in capture.error
+    finally:
+        capture.release()
+
+
+def test_releasing_a_url_camera_does_not_wait_for_a_trickling_server(mjpeg):
+    server = mjpeg()
+    capture = cameras._HttpCapture(f"{server.base}/trickle.mjpg")
+    time.sleep(0.3)                                  # the reader is inside the endless header line
+    released = threading.Event()
+    threading.Thread(target=lambda: (capture.release(), released.set()), daemon=True).start()
+    assert released.wait(2.0)
+    assert not capture._thread.is_alive()
 
 
 def test_url_camera_snapshot(mjpeg, tmp_path):

@@ -10,7 +10,8 @@ import pytest
 
 class MjpegServer:
     """Serves /stream.mjpg (multipart MJPEG at ``fps``; each frame's gray level is its number mod 250),
-    /nolength.mjpg (parts without Content-Length) and /latest.jpg. ``drop_after`` closes each stream after
+    /nolength.mjpg (parts without Content-Length), /latest.jpg, and two misbehaving streams whose first part
+    header never ends: /trickle.mjpg (a byte every 50 ms) and /longline.mjpg (100 kB, then a byte every 50 ms). ``drop_after`` closes each stream after
     that many frames."""
 
     def __init__(self, fps=100.0, drop_after=None, part_headers=b""):
@@ -41,6 +42,21 @@ class MjpegServer:
                     self.end_headers()
                     self.wfile.write(data)
                     return
+                if self.path in ("/trickle.mjpg", "/longline.mjpg"):
+                    # a misbehaving server: one part header that never ends, a byte at a time or all at once
+                    self.send_response(200)
+                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                    self.end_headers()
+                    try:
+                        self.wfile.write(b"--frame\r\nX-Pad: ")
+                        if self.path == "/longline.mjpg":
+                            self.wfile.write(b"a" * 100_000)
+                        while True:
+                            self.wfile.write(b"a")
+                            self.wfile.flush()
+                            time.sleep(0.05)
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        return
                 if self.path == "/text":
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html")
