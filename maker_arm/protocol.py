@@ -4,7 +4,7 @@ Every frame is a classic standard-ID frame addressed to the motor ID (1..127). R
 the host ID (0xFD) with the motor ID in payload byte 0; typed parameter replies arrive on
 0x300|id (read) or 0x400|id (write).
 
-Sources: RobStride RS00/RS02 manuals 260713 section 6; LeRobot RobStride driver
+Sources: RobStride RS00/RS02 manuals 260713 section 6 (command 7, modify motor CAN ID, as in the RS04 manual); LeRobot RobStride driver
 (makermods-robotics/lerobot@5ce2fe41a); MakerModsLab maker_fault_diagnostics.py and
 maker_gripper_hold.py.
 """
@@ -55,6 +55,7 @@ class ParamIndex:
 CAN_TIMEOUT_TICKS_PER_MS = 20
 
 # Command opcodes (payload byte 7 after six 0xFF bytes).
+OP_SET_ID = 0xFA         # byte 6 = the new motor ID; answered with the MCU identifier on the motor ID
 OP_CLEAR_FAULT = 0xFB    # byte 6 = 0xFF clears faults and returns feedback; 0x00 reads faults only
 OP_ENABLE = 0xFC
 OP_DISABLE = 0xFD
@@ -118,6 +119,11 @@ def encode_fault_query(motor_id: int) -> tuple[int, bytes]:
 
 def encode_set_zero(motor_id: int) -> tuple[int, bytes]:
     return command(motor_id, OP_SET_ZERO)
+
+
+def encode_set_id(motor_id: int, new_id: int) -> tuple[int, bytes]:
+    """Change the motor answering on ``motor_id`` to ``new_id`` (manual section 6, command 7)."""
+    return command(motor_id, OP_SET_ID, _id(new_id))
 
 
 def float_to_uint(value: float, lo: float, hi: float, bits: int) -> int:

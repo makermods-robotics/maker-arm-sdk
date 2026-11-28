@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Optional, Union
 
 from . import protocol
-from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout
+from .errors import ArmError, ConnectError, FaultLatched, ParamTimeout, StateError
 from .transport.base import CanBackend
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ DEFAULT_MODEL = "RS00"
 KP_RANGE = (protocol.KP_MIN, protocol.KP_MAX)
 KD_RANGE = (protocol.KD_MIN, protocol.KD_MAX)
 ID_RANGE = (1, 127)
+ID_SETTLE_S = 0.05      # after an id write, before the motor is asked on its new id
 DEFAULT_HOST_ID = protocol.HOST_CAN_ID
 
 
@@ -313,10 +314,52 @@ class Motor:
         self._send(protocol.encode_set_zero(self.motor_id))
 
     def set_id(self, new_id: int, timeout: float = 0.5) -> None:
-        raise ArmError(
-            "changing a RobStride motor's CAN ID over the MIT protocol is not supported: the "
-            "ID-change frame is not documented in the sources this SDK follows. Set the ID with "
-            "RobStride Motor Studio (docs/motor-replacement.md)")
+        """Change the motor's CAN ID to new_id (MIT command 7: FF x6, new ID, FA).
+
+        Refused when the last feedback shows torque on, when the motor does not answer on its present
+        ID, or when it reports a fault. After the write the motor must answer the fault query on
+        new_id and no longer on the old one; a motor that still answers on the old ID took the
+        frame without applying it (StateError: power-cycle it and scan). The caller makes sure
+        nothing else answers on new_id (``Arm.set_motor_id`` does).
+        """
+        lo, hi = ID_RANGE
+        if not lo <= new_id <= hi:
+            raise ValueError(f"motor id must be in [{lo}, {hi}], got {new_id}")
+        if new_id == self.motor_id:
+            return
+        if self._feedback is not None and self._feedback.enabled:
+            raise StateError(f"{self.joint.label}: disable the motor before changing its id")
+        step = min(timeout, 0.12)
+        status = self.check(step)
+        if status.has_fault:
+            raise StateError(f"{self.joint.label}: the motor reports a fault ({status.text}); clear it first")
+        old_id = self.motor_id
+        backend, previous = self._backend, self._backend.recv_callback
+
+        def tap(can_id, data):          # replies from the new id are routed to another motor, or nowhere
+            self.handle_frame(can_id, data)
+            if previous is not None and previous != self.handle_frame:
+                previous(can_id, data)
+
+        backend.set_recv_callback(tap)
+        try:
+            self._send(protocol.encode_set_id(old_id, new_id))
+            time.sleep(ID_SETTLE_S)
+            self.motor_id = new_id
+            try:
+                self.check(step)
+                return
+            except ParamTimeout:
+                self.motor_id = old_id
+            try:
+                self.check(step)
+            except ParamTimeout:
+                raise StateError(f"{self.joint.label}: the motor answers on neither ID {old_id} nor ID {new_id} "
+                                 "after the id write; power-cycle it and scan") from None
+            raise StateError(f"{self.joint.label}: the motor still answers on ID {old_id}; if the change was "
+                             "taken it applies after a power cycle, so power-cycle it and scan")
+        finally:
+            backend.set_recv_callback(previous)
 
     def arm_watchdog(self, timeout_ms: int, timeout: float = 0.12) -> Optional[int]:
         """Set and verify the motor-side CAN timeout. Returns the previous value as the restore

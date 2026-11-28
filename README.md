@@ -95,7 +95,7 @@ return to rest cannot be confirmed, the arm keeps holding and the command exits 
 | `release` | Torque off where the arm is: it drops unless it is at rest or supported. |
 | `clear-faults` | Clear motor faults once the cause is fixed. |
 | `zero` | Make the current pose the zero. Stored in the motors. |
-| `set-id` | Not supported on RobStride motors: set IDs with RobStride Motor Studio. |
+| `set-id` | Change one motor's CAN ID, with torque off: `set-id --from 7 --to 8`. |
 
 ## Python
 

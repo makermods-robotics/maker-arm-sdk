@@ -149,9 +149,12 @@ def test_watchdog_readback_mismatch_refuses_enable_and_restores():
     assert "enable" not in gripper.log
 
 
-def test_set_motor_id_is_refused_without_a_frame():
-    arm, bus, _ = make_arm()
-    with pytest.raises(Exception, match="Motor Studio"):
-        arm.set_motor_id(1, 9)
-    assert all(data[:6] == bytes([0xFF] * 6) and data[6:] == bytes([0x00, 0xFB]) for _, data in bus.sent)
-    assert not bus.is_open
+def test_set_motor_id_changes_the_motor_and_routes_the_joint_to_it():
+    arm, bus, motors = make_arm()
+    arm.set_motor_id(1, 9)
+    assert motors[1].motor_id == 9 and not bus.is_open
+    assert arm.config.joints[0].motor_id == 9
+    with pytest.raises(Exception, match="already answers"):
+        arm.set_motor_id(9, 2)
+    arm.set_motor_id(9, 1)
+    assert motors[1].motor_id == 1 and arm.config.joints[0].motor_id == 1
