@@ -126,7 +126,8 @@ def add_arm_args(ap: argparse.ArgumentParser, many: bool = False) -> None:
     add_rig_arg(ap)
     ap.add_argument("--arm", action="append", metavar="NAME",
                     help="arm name from the rig file" + ("; repeat for several, 'all' for every arm" if many else ""))
-    ap.add_argument("--config", help="arm profile YAML (default: the rig entry's, else the shipped one)")
+    ap.add_argument("--config", help="arm profile: a YAML path or a shipped profile's name "
+                    "(default: the rig entry's, else the shipped default)")
     add_backend_args(ap)
 
 

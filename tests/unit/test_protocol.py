@@ -64,6 +64,21 @@ def test_model_scaling_differs():
     assert p.parse_frame(p.HOST_CAN_ID, data, p.RS00).torque != pytest.approx(10.0, abs=0.5)
 
 
+def test_rs10p_ranges_from_the_10p_manual():
+    assert (p.RS10P.p_max, p.RS10P.v_max, p.RS10P.t_max) == (12.57, 13.0, 42.0)
+    assert p.MOTOR_PARAMS["RS10P"] is p.RS10P
+    data = feedback_bytes(2, pos=-1.0, vel=3.0, tau=30.0, params=p.RS10P)
+    fb = p.parse_frame(p.HOST_CAN_ID, data, p.RS10P)
+    assert (fb.position, fb.velocity, fb.torque) == pytest.approx((-1.0, 3.0, 30.0), abs=0.03)
+    assert p.parse_frame(p.HOST_CAN_ID, data, p.RS02).torque == pytest.approx(30.0 * 17 / 42, abs=0.03)
+
+
+def test_rs10p_torque_command_uses_its_own_range():
+    _, frame = p.encode_control(2, 0.0, 0.0, 0.0, 0.0, 21.0, p.RS10P)
+    raw = ((frame[6] & 0xF) << 8) | frame[7]
+    assert p.uint_to_float(raw, -42.0, 42.0, 12) == pytest.approx(21.0, abs=0.03)
+
+
 @pytest.mark.parametrize("data", [bytes([7, 1, 0, 0, 0]), bytes([7, 1, 0, 0, 0, 0, 0, 0])])
 def test_fault_status_five_or_padded_eight_bytes(data):
     st = p.parse_frame(p.HOST_CAN_ID, data)

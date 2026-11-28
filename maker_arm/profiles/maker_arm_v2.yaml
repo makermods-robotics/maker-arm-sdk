@@ -1,0 +1,54 @@
+# Maker Arm v2 follower: the v1 arm with RobStride 10P motors (25:1, ±42 N·m MIT range) on J2/J3
+# instead of RS02. 7 RobStride motors, MIT protocol, classic CAN 1 Mbit/s.
+# Zero pose (set with `maker-arm zero`): folded against the base, gripper fully closed.
+# Limits are the mechanical stops with a 0.05 rad backoff, in motor degrees.
+# Limits, gains, tool point and URDF are the v1 values (LeRobot MakerFollowerConfig,
+# makermods-robotics/lerobot@5ce2fe41a). Each 10P is about 80 g heavier than the RS02 it replaces,
+# so the gravity model slightly underestimates J2/J3 holding torque.
+host_id: 253
+required_motor_ids: [1, 2, 3, 4, 5, 6, 7]
+control_rate_hz: 200
+max_velocity: 5.0          # rad/s command rate limit
+limit_margin: 0.0
+feedback_timeout: 0.25     # feedback older than this stops the arm
+fault_poll_interval: 0.25
+# Model: the fitted URDF (package data), drawn y-up; the base rotation turns it z-up. The arm
+# reports wrist_yaw opposite to the URDF axis (urdf_sign -1). gravity_limit_nm sits above the
+# model's maximum inside the soft limits and below each motor's torque range.
+# Tool point, source: Dream IK spec (grasp_center, 0.1696 m along link_007 -z); verify on your arm.
+urdf: urdf/robot.urdf
+urdf_base_rpy_deg: [90, 0, 180]
+tcp_xyz: [0.0, 0.0, -0.1696387]
+tcp_rpy_deg: [180, 0, 90]
+# Trajectory IK (Arm.move_ee): rest pose and weights it leans toward, per-joint speed caps (each
+# capped at max_velocity), source: Dream IK spec (MAKERS_ARM).
+ik:
+  rest_pose: [0.0, -1.2, 0.81, -0.1, 0.0, 0.0]
+  rest_weight: [0.15, 0.3, 0.3, 0.3, 0.3, 0.3]
+  max_speed_deg: [120, 120, 120, 120, 120, 120]
+joints:
+  - {name: shoulder_pan,  motor_id: 1, model: RS00, limits_deg: [-158.2, 156.1], kp: 60,  kd: 4.0, gravity_limit_nm: 0.5}
+  - {name: shoulder_lift, motor_id: 2, model: RS10P, limits_deg: [-175.3, -3.2],  kp: 150, kd: 4.5, gravity_limit_nm: 15.0}
+  - {name: elbow_flex,    motor_id: 3, model: RS10P, limits_deg: [2.8, 236.1],    kp: 90,  kd: 3.0, gravity_limit_nm: 7.5}
+  - {name: wrist_flex,    motor_id: 4, model: RS00, limits_deg: [-65.2, 104.0],  kp: 30,  kd: 2.0, gravity_limit_nm: 2.0}
+  - {name: wrist_yaw,     motor_id: 5, model: RS00, limits_deg: [-97.6, 78.0],   kp: 30,  kd: 2.0, gravity_limit_nm: 0.5, urdf_sign: -1}
+  - {name: wrist_roll,    motor_id: 6, model: RS00, limits_deg: [-153.2, 152.0], kp: 30,  kd: 2.0, gravity_limit_nm: 0.5}
+  # Gripper: closes toward increasing angle, 0 = fully closed. Closing effort capped at 1 N·m and
+  # grip regulated to 0.5 N·m on contact; 500 ms motor watchdog (firmware >=0.0.3.27); stop at
+  # 55 °C, no enable unless below 45 °C; warning or fault flag stops it; released (not held) on
+  # fault; excluded from the rest return. Open bound -96 deg, source: MakerModsLab gripper_settings.py.
+  - name: gripper
+    motor_id: 7
+    model: RS00
+    limits_deg: [-96.0, -2.5]
+    kp: 20
+    kd: 0.5
+    can_timeout_ms: 500
+    max_temperature_c: 55
+    enable_temperature_c: 45
+    return_to_rest: false
+    release_on_fault: true
+    warning_is_fault: true
+    hold_torque_nm: 0.5
+    closing_direction: 1
+    open_position_deg: -96.0   # fully open: the open limit

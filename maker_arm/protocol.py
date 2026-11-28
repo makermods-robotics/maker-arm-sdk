@@ -2,9 +2,10 @@
 
 Every frame is a classic standard-ID frame addressed to the motor ID (1..127). Replies arrive on
 the host ID (0xFD) with the motor ID in payload byte 0; typed parameter replies arrive on
-0x300|id (read) or 0x400|id (write).
+0x300|id (read) or 0x400|id (write), or, on some firmware, on the host ID without a motor ID.
 
-Sources: RobStride RS00/RS02 manuals 260713 section 6 (command 7, modify motor CAN ID, as in the RS04 manual); LeRobot RobStride driver
+Sources: RobStride RS00/RS02 manuals 260713 and RS10P manual 260907, section 6 (command 7, modify
+motor CAN ID, as in the RS04 manual); LeRobot RobStride driver
 (makermods-robotics/lerobot@5ce2fe41a); MakerModsLab maker_fault_diagnostics.py and
 maker_gripper_hold.py.
 """
@@ -43,7 +44,9 @@ class MotorParams:
 # RS02 firmware <=0.2.2.11 maps position to ±12.5 rad; check firmware during bring-up.
 RS00 = MotorParams(p_max=12.57, v_max=33.0, t_max=14.0)
 RS02 = MotorParams(p_max=12.57, v_max=44.0, t_max=17.0)
-MOTOR_PARAMS = {"RS00": RS00, "RS02": RS02}
+# RobStride 10P (25:1, 42 N·m peak), source: RobStride RS10P user manual 260907 section 6.
+RS10P = MotorParams(p_max=12.57, v_max=13.0, t_max=42.0)
+MOTOR_PARAMS = {"RS00": RS00, "RS02": RS02, "RS10P": RS10P}
 
 
 class ParamIndex:
@@ -208,6 +211,17 @@ def reply_motor_id(can_id: int, data: bytes) -> int | None:
     if can_id & 0x700 in (0x300, 0x400):
         return can_id & 0xFF
     return data[0] if data else None
+
+
+def parse_host_param_reply(can_id: int, data: bytes, index: int,
+                           host_id: int = HOST_CAN_ID) -> ParamReply | None:
+    """A parameter reply sent to the host ID, as some firmware does instead of 0x300|id:
+    [index LE16, 00 00, value LE32]. It carries no motor ID (``motor_id`` is 0), and its first byte
+    can alias a motor ID, so it is only recognized for the index a read or write is waiting on."""
+    if (getattr(can_id, "extended", False) or can_id != host_id or len(data) != 8
+            or data[:4] != struct.pack("<H2x", index)):
+        return None
+    return ParamReply(0, index, bytes(data[4:8]))
 
 
 def parse_frame(can_id: int, data: bytes, params: MotorParams = RS00,

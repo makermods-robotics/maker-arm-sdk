@@ -70,3 +70,16 @@ joints:
         with pytest.raises(ValueError, match="open_position"):
             ArmConfig(joints=[JointConfig(motor_id=1, lo=0.0, hi=1.0, kp=1, kd=1, closing_direction=-1,
                                           open_position=bad)])._validate()
+
+
+def test_profile_by_shipped_name_or_path(tmp_path):
+    names = sdk.config.shipped_profiles()
+    assert names
+    shipped = sdk.config.profile_path(names[0])
+    assert shipped.is_file() and shipped.stem == names[0]
+    assert ArmConfig.from_yaml(names[0]) == ArmConfig.from_yaml(shipped)
+    assert sdk.config.profile_path(names[0], tmp_path) == shipped
+    local = tmp_path / names[0]
+    local.write_text("")
+    assert sdk.config.profile_path(names[0], tmp_path) == local   # a file of that name wins
+    assert sdk.config.profile_path("missing.yaml", tmp_path) == tmp_path / "missing.yaml"

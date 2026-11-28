@@ -57,7 +57,7 @@ class SimMotor:
                  track: bool = True, faulted: bool = False, warning: bool = False,
                  fault_word: Optional[int] = None, fault_flag: bool = False,
                  params_supported: bool = False, run_mode: int = 0, can_timeout: int = 0,
-                 host_id: int = p.HOST_CAN_ID):
+                 host_id: int = p.HOST_CAN_ID, param_replies_to_host: bool = False):
         self.motor_id = motor_id
         self.model = model
         self.params = p.MOTOR_PARAMS[model]
@@ -73,6 +73,7 @@ class SimMotor:
         self.run_mode = run_mode
         self.can_timeout = can_timeout
         self.host_id = host_id           # CAN id replies are sent to
+        self.param_replies_to_host = param_replies_to_host   # True: parameter replies go to the host ID
         self.apply_id_change = True      # False: an id write is taken but the motor keeps its id
         self.uid = struct.pack("<Q", 0x5354524944450000 | motor_id)   # the MCU identifier an id write returns
         self.log: list = []
@@ -106,13 +107,14 @@ class SimMotor:
             if not self.params_supported:
                 return []
             idx = struct.unpack("<H", data[:2])[0]
+            reply_id = self.host_id if self.param_replies_to_host else can_id
             if kind == "param_write":
                 self.log.append(("write", idx))
                 if idx == p.ParamIndex.CAN_TIMEOUT:
                     self.can_timeout = struct.unpack("<I", data[4:8])[0]
-                return [(can_id, bytes(data))]
+                return [(reply_id, bytes(data))]
             value = {p.ParamIndex.RUN_MODE: self.run_mode, p.ParamIndex.CAN_TIMEOUT: self.can_timeout}.get(idx, 0)
-            return [(can_id, bytes(data[:4]) + struct.pack("<I", value))]
+            return [(reply_id, bytes(data[:4]) + struct.pack("<I", value))]
         if kind == "status_query":
             self.log.append("status_query")
             return [(self.host_id, bytes([self.motor_id]) + struct.pack("<I", self.fault_word))]

@@ -1,7 +1,7 @@
 # Replacing a motor
 
 1. Support and fully depower the arm.
-2. Install the correct model (`RS02` for J2/J3, `RS00` elsewhere).
+2. Install the correct model: `RS00` on J1 and J4–J7; on J2/J3 `RS02` (v1) or `RS10P` (v2).
 3. Factory preparation of the replacement (done once, before it joins the arm):
    - switch it from the private protocol to MIT with
      `python tools/engineering/switch_protocol.py --ids ID --to mit`, then power-cycle, and

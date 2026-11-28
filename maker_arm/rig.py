@@ -10,7 +10,7 @@ The file (YAML)::
 
     arms:
       left:  {backend: gs_usb, port: "gs_usb:<serial>"}   # profile: shipped default
-      right: {backend: socketcan, channel: can1, profile: my_profile.yaml}
+      right: {backend: socketcan, channel: can1, profile: my_profile.yaml}   # or a shipped profile's name
     cameras: {top: "usb:...", left_wrist: "usb:...", right_wrist: "index:2"}
     leaders:
       left:  {type: star, port: /dev/ttyUSB0}       # map: Star mapping JSON (default: shipped)
@@ -36,7 +36,7 @@ import yaml
 from ._product import CLI_NAME, DEFAULT_PROFILE
 from .arm import Arm, ArmState
 from .cameras import Camera
-from .config import ArmConfig
+from .config import ArmConfig, profile_path
 from .errors import ArmError
 from .leaders import ArmLeader, StarLeader
 from .transport.base import CanBackend, create_backend
@@ -101,7 +101,7 @@ class ArmSpec:
         return self.port or "slcan"
 
     def config(self, base: Optional[Path] = None) -> ArmConfig:
-        return ArmConfig.from_yaml(str(_resolve(self.profile, base) if self.profile else DEFAULT_PROFILE))
+        return ArmConfig.from_yaml(profile_path(self.profile, base) if self.profile else DEFAULT_PROFILE)
 
     def backend_kwargs(self) -> dict:
         if self.backend == "socketcan":

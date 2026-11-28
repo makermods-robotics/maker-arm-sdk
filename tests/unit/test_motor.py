@@ -25,7 +25,7 @@ def wired(fake: FakeMotor) -> tuple[Motor, FakeBus]:
 
 # ── module-level seam ──
 def test_constants_describe_robstride_mit():
-    assert motor_module.MODELS == ("RS00", "RS02")
+    assert motor_module.MODELS == ("RS00", "RS02", "RS10P")
     assert motor_module.DEFAULT_MODEL == "RS00" and JointConfig(1, -1, 1, 1, 1).model == "RS00"
     assert motor_module.KP_RANGE == (0.0, 500.0) and motor_module.KD_RANGE == (0.0, 5.0)
     assert motor_module.ID_RANGE == (1, 127)
@@ -317,3 +317,31 @@ def test_disable_confirmed_needs_mode_zero_on_modern_firmware():
     assert motor.disable_confirmed(timeout=0.005, attempts=2) is False
     old, _ = wired(FakeMotor(2))
     assert old.disable_confirmed() is True
+
+
+# ── parameter replies on the host ID (firmware that answers 0x300|id there, with no motor ID) ──
+def test_host_id_param_reply_is_read():
+    fake = FakeMotor(2, params_supported=True, param_replies_to_host=True, can_timeout=4000)
+    motor, _ = wired(fake)
+    assert motor.read_param("can_timeout") == 4000
+    assert motor.probe_params() is True
+    assert motor.write_param("can_timeout", 10000) == 10000 and fake.can_timeout == 10000
+
+
+def test_host_id_run_mode_reply_is_not_motor_5_fault_status():
+    """run_mode 0x7005 answered on the host ID starts with byte 5: it must not reach motor 5."""
+    fakes = [FakeMotor(i, params_supported=True, param_replies_to_host=True) for i in (2, 5)]
+    bus = FakeBus(fakes)
+    motors = {f.motor_id: Motor(joint(f.motor_id), bus) for f in fakes}
+    bus.set_recv_callback(lambda cid, data: motors.get(route(cid, data)) and motors[route(cid, data)].handle_frame(cid, data))
+    assert motors[2].probe_params() is True
+    assert motors[5].fault_latched is None and motors[5].status is None
+    assert bus.recv_callback is not None and motors[5].probe_params() is True
+
+
+def test_parse_host_param_reply_needs_the_awaited_index():
+    data = struct.pack("<H2xI", p.ParamIndex.RUN_MODE, 0)
+    assert p.parse_host_param_reply(p.HOST_CAN_ID, data, p.ParamIndex.RUN_MODE).value("u8") == 0
+    assert p.parse_host_param_reply(p.HOST_CAN_ID, data, p.ParamIndex.CAN_TIMEOUT) is None
+    assert p.parse_host_param_reply(0x305, data, p.ParamIndex.RUN_MODE) is None
+    assert p.parse_host_param_reply(CanId(p.HOST_CAN_ID, extended=True), data, p.ParamIndex.RUN_MODE) is None

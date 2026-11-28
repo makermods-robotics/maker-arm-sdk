@@ -17,6 +17,11 @@ parameter replies come back on `0x300|id` (read) or `0x400|id` (write).
 | Param read | ID `0x300|id`: index LE16, 6 zero bytes | firmware >= RS00 0.0.3.27 / RS02 0.2.3.32 |
 | Param write | ID `0x400|id`: index LE16, 2 zero bytes, value LE32 | same firmware |
 
+Parameter replies come back on `0x300|id` / `0x400|id`, or, on the Maker Arm v2 motors (RS00 and
+RS10P), on the host ID as index LE16, 2 zero bytes, value LE32, with no motor ID. The first byte of
+such a reply can look like a motor ID (`run_mode` 0x7005 starts with 05), so the SDK reads one
+parameter at a time per bus and takes a host-ID reply only as the answer to the read in flight.
+
 The SDK reads state with the fault-clearing `FB` frame only after a non-clearing fault query
 shows no fault; once a motor reports a fault it refuses that frame until `clear_fault()`.
 
@@ -26,7 +31,8 @@ Bytes 1–2 position (16 bit, ±12.57 rad), 3–4.4 velocity (12 bit), 4.4–5 t
 Byte 6 bits 7–6 are the mode (0 disabled, 2 enabled), bit 5 the fault flag, bit 4 the warning
 flag; the low 12 bits of bytes 6–7 are winding temperature ×10 °C. Older firmware leaves the
 mode and flag bits zero, so the SDK only checks for mode 2 on motors that support parameter
-access. Ranges: RS00 ±33 rad/s, ±14 Nm; RS02 ±44 rad/s, ±17 Nm (LeRobot types O0 and O1).
+access. Ranges: RS00 ±33 rad/s, ±14 Nm; RS02 ±44 rad/s, ±17 Nm (LeRobot types O0 and O1);
+RS10P ±13 rad/s, ±42 Nm (RS10P manual 260907). Position is ±12.57 rad on all three.
 
 ## Fault status
 
@@ -50,5 +56,5 @@ New RobStride motors ship on the private 29-bit protocol. Switching to MIT is a 
 factory step (`tools/engineering/switch_protocol.py`, then a power cycle). A motor
 still on the private protocol does not answer the SDK.
 
-Sources: RobStride RS00/RS02 manuals 260713 section 6; makermods-robotics/lerobot@5ce2fe41a
+Sources: RobStride RS00/RS02 manuals 260713 and RS10P manual 260907, section 6; makermods-robotics/lerobot@5ce2fe41a
 `motors/robstride`; MakerModsLab `maker_fault_diagnostics.py`, `maker_gripper_hold.py`.

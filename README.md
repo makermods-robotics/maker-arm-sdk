@@ -223,11 +223,11 @@ More: [docs/safety.md](docs/safety.md).
 
 ## Hardware
 
-| Joint | Motor ID | Model | Limits (deg) |
+| Joint | Motor ID | Model (v1 / v2) | Limits (deg) |
 |---|---|---|---|
 | shoulder_pan | 1 | RS00 | -158.2 .. 156.1 |
-| shoulder_lift | 2 | RS02 | -175.3 .. -3.2 |
-| elbow_flex | 3 | RS02 | 2.8 .. 236.1 |
+| shoulder_lift | 2 | RS02 / RS10P | -175.3 .. -3.2 |
+| elbow_flex | 3 | RS02 / RS10P | 2.8 .. 236.1 |
 | wrist_flex | 4 | RS00 | -65.2 .. 104.0 |
 | wrist_yaw | 5 | RS00 | -97.6 .. 78.0 |
 | wrist_roll | 6 | RS00 | -153.2 .. 152.0 |
@@ -235,8 +235,12 @@ More: [docs/safety.md](docs/safety.md).
 
 RobStride motors on the MIT protocol, classic CAN at 1 Mbit/s, host ID 0xFD.
 
+The Maker Arm v2 has RobStride 10P motors on J2/J3. Its profile is `maker_arm_v2`: pass
+`--config maker_arm_v2`, or set `profile: maker_arm_v2` on the arm in the rig file. v1 is the default.
+
 Zero pose: folded against the base, gripper fully closed. The arm's limits, gains and tool point are in
-[`maker_arm/profiles/maker_arm_v1.yaml`](maker_arm/profiles/maker_arm_v1.yaml). The tool point comes from the Dream IK spec;
+[`maker_arm/profiles/maker_arm_v1.yaml`](maker_arm/profiles/maker_arm_v1.yaml) and
+[`maker_arm_v2.yaml`](maker_arm/profiles/maker_arm_v2.yaml). The tool point comes from the Dream IK spec;
 check it on your arm before relying on Cartesian moves. Wire protocol: [docs/mit-protocol.md](docs/mit-protocol.md). Replacing a motor: [docs/motor-replacement.md](docs/motor-replacement.md).
 
 ## Development

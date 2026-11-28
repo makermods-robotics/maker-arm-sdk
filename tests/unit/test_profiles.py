@@ -7,7 +7,7 @@ import pytest
 
 from maker_arm.config import ArmConfig
 from maker_arm.mapping import JointMapper
-from maker_arm._product import DEFAULT_PROFILE, DEFAULT_STAR_MAPPING
+from maker_arm._product import DEFAULT_PROFILE, DEFAULT_STAR_MAPPING, PROFILE_DIR
 
 # name: (motor_id, model, limits_deg, kp, kd)
 REFERENCE = {
@@ -80,3 +80,14 @@ def test_profile_model_is_the_gravity_reference():
     assert [[round(math.degrees(j.lo), 6), round(math.degrees(j.hi), 6)] for j in arm] == spec["limits_deg"]
     for j in arm:
         assert j.gravity_limit_nm < protocol.MOTOR_PARAMS[j.model].t_max
+
+
+def test_v2_is_v1_with_10p_on_j2_j3():
+    v1 = ArmConfig.from_yaml(DEFAULT_PROFILE)
+    v2 = ArmConfig.from_yaml(PROFILE_DIR / "maker_arm_v2.yaml")
+    assert ArmConfig.from_yaml("maker_arm_v2") == v2
+    assert [j.model for j in v2.joints] == ["RS00", "RS10P", "RS10P", "RS00", "RS00", "RS00", "RS00"]
+    for a, b in zip(v1.joints, v2.joints):
+        assert a.__dict__ | {"model": None} == b.__dict__ | {"model": None}
+    assert {k: v for k, v in v1.__dict__.items() if k != "joints"} == \
+        {k: v for k, v in v2.__dict__.items() if k != "joints"}

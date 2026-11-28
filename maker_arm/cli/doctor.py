@@ -11,7 +11,7 @@ import shutil
 import subprocess
 
 from .._product import CLI_NAME, DEFAULT_PROFILE, DEFAULT_STAR_MAPPING
-from ..config import ArmConfig
+from ..config import ArmConfig, shipped_profiles
 from ..mapping import JointMapper
 from ..rig import Rig, RigError, default_backend, default_path
 from .common import add_rig_arg, make_parser, run
@@ -70,6 +70,7 @@ def body(a, out) -> dict:
     config = ArmConfig.from_yaml(a.config)
     JointMapper.from_json(a.map_path)
     say(f"arm profile: {a.config} ({config.n_joints} joints, MIT protocol, valid)")
+    say(f"shipped profiles: {', '.join(shipped_profiles())}")
     say(f"Star map:    {a.map_path} (valid)")
 
     found = discover()

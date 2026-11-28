@@ -21,10 +21,12 @@ the arm-level ``friction_deadzone``.
 import math
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 import yaml
 
+from ._product import PROFILE_DIR
 from .gravity import DEFAULT_GRAVITY_SCALE, MAX_GRAVITY_SCALE
 from .motor import DEFAULT_HOST_ID, DEFAULT_MODEL, ID_RANGE, KD_RANGE, KP_RANGE, MODELS
 from .trajectory_ik import JOINT_FIELDS, WEIGHT_FIELDS
@@ -108,7 +110,9 @@ class ArmConfig:
         return len(self.joints)
 
     @classmethod
-    def from_yaml(cls, path: str) -> "ArmConfig":
+    def from_yaml(cls, path: Union[str, PathLike]) -> "ArmConfig":
+        """Load a profile: a YAML path, or the name of a shipped profile (see ``shipped_profiles``)."""
+        path = profile_path(path)
         with open(path) as f:
             raw = yaml.safe_load(f)
         try:
@@ -211,6 +215,23 @@ class ArmConfig:
                 raise ValueError(f"ik.max_speed must be >0 per joint, got {value!r}")
             if name == "rest_weight" and not all(v >= 0 for v in value):
                 raise ValueError(f"ik.rest_weight must be >=0 per joint, got {value!r}")
+
+
+def shipped_profiles() -> list[str]:
+    """Names of the profiles shipped with the package, usable wherever a profile path is."""
+    return sorted(p.stem for p in PROFILE_DIR.glob("*.yaml"))
+
+
+def profile_path(profile: Union[str, PathLike], base: Optional[Path] = None) -> Path:
+    """A profile path, relative to ``base`` when given. A bare name with no such file, such as
+    ``"<name>"`` for ``<name>.yaml``, is the shipped profile of that name."""
+    p = Path(profile).expanduser()
+    path = p if p.is_absolute() or base is None else base / p
+    if not path.exists() and p.suffix == "" and len(p.parts) == 1:
+        shipped = PROFILE_DIR / f"{p}.yaml"
+        if shipped.is_file():
+            return shipped
+    return path
 
 
 def check_gains(motor_id: int, kp: float, kd: float) -> None:

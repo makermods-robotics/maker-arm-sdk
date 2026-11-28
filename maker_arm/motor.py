@@ -14,6 +14,8 @@ import math
 import threading
 import time
 from dataclasses import dataclass, field
+import weakref
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, NamedTuple, Optional, Union
 
 from . import protocol
@@ -32,6 +34,15 @@ KD_RANGE = (protocol.KD_MIN, protocol.KD_MAX)
 ID_RANGE = (1, 127)
 ID_SETTLE_S = 0.05      # after an id write, before the motor is asked on its new id
 DEFAULT_HOST_ID = protocol.HOST_CAN_ID
+
+# Parameter replies on the host ID name no motor, so reads and writes on one bus run one at a time.
+_param_locks: "weakref.WeakKeyDictionary[CanBackend, threading.Lock]" = weakref.WeakKeyDictionary()
+_param_locks_guard = threading.Lock()
+
+
+def _param_lock(backend: CanBackend) -> threading.Lock:
+    with _param_locks_guard:
+        return _param_locks.setdefault(backend, threading.Lock())
 
 
 def route(can_id: int, data: bytes, host_id: int = DEFAULT_HOST_ID) -> Optional[int]:
@@ -397,9 +408,31 @@ class Motor:
                 return spec.index, dtype or spec.dtype
         return int(name_or_index), dtype or "f"
 
+    @contextmanager
+    def _host_param_replies(self, index: int):
+        """While a read or write of ``index`` is in flight, take its reply if it comes on the host
+        ID (no motor ID in it) before routing hands it to the motor its first byte names."""
+        with _param_lock(self._backend):
+            previous = self._backend.recv_callback
+
+            def receive(can_id, data):
+                reply = protocol.parse_host_param_reply(can_id, data, index, self._host_id)
+                if reply is None:
+                    if previous is not None:
+                        previous(can_id, data)
+                elif self._param_expect == index:
+                    self._param_reply = reply
+                    self._param_event.set()
+
+            self._backend.set_recv_callback(receive)
+            try:
+                yield
+            finally:
+                self._backend.set_recv_callback(previous)
+
     def read_param(self, name_or_index: Union[str, int], dtype: Optional[str] = None, timeout: float = 0.12):
         index, dtype = self._param(name_or_index, dtype)
-        with self._query_lock:
+        with self._query_lock, self._host_param_replies(index):
             self._param_event.clear()
             self._param_reply = None
             self._param_expect = index
@@ -418,8 +451,9 @@ class Motor:
         if save:
             raise ArmError("saving parameters to flash is not supported over the RobStride MIT protocol")
         index, dtype = self._param(name_or_index, dtype)
-        self._send(protocol.encode_write_param(self.motor_id, index, value, dtype))
-        time.sleep(0.005)
+        with self._host_param_replies(index):   # a write acknowledgement on the host ID is dropped
+            self._send(protocol.encode_write_param(self.motor_id, index, value, dtype))
+            time.sleep(0.005)
         return self.read_param(index, dtype, timeout)
 
     def probe_params(self, timeout: float = 0.12, attempts: int = 2) -> bool:
