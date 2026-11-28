@@ -181,9 +181,12 @@ def test_gravity_float_then_rest(bench, monkeypatch):
 
 def test_gravity_check_compares_with_the_model(bench, monkeypatch):
     bench.add_arm()
-    model = lambda q: [0.1 * (i + 1) for i in range(6)]   # noqa: E731
-    monkeypatch.setattr(sdk.cli.gravity, "model_for", lambda config: model)
+    chain_model = sdk.gravity.GravityFeedforward.model
+    seen = []
+    monkeypatch.setattr(sdk.gravity.GravityFeedforward, "model",   # the real model takes the chain's joints only
+                        lambda self, q: (seen.append(len(q)), chain_model(self, q), [0.1 * (i + 1) for i in range(6)])[2])
     doc = bench.json("gravity", "--check", "--seconds", "0.2", "--settle", "0", "--yes")
+    assert set(seen) == {6}
     assert doc["samples"] >= 2 and doc["then"] == "rest"
     elbow = doc["joints"]["elbow_flex"]
     assert elbow["model"] == pytest.approx(0.3) and elbow["difference"] == pytest.approx(elbow["measured"] - 0.3)
